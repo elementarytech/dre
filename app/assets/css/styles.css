@@ -1,0 +1,362 @@
+/* Geral */
+body {
+  font-family: "Poppins", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background-color: #f3f4f6;
+  /* cinza claro estilo SYNC */
+}
+
+/* Tela de login */
+.login-card {
+  max-width: 400px;
+  width: 100%;
+  border-radius: 1rem;
+}
+
+/* Layout principal */
+#wrapper {
+  min-height: 100vh;
+}
+
+#page-content-wrapper {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* =========================
+   Sidebar (nova identidade)
+   ========================= */
+.sidebar {
+  width: 260px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  background: linear-gradient(180deg, #0b1220 0%, #020617 100%);
+  color: #cbd5e1;
+  border-right: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.02);
+}
+
+/* Marca / logo no topo */
+.sidebar-brand {
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(255, 255, 255, 0.02);
+}
+.sidebar-logo {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: 40px;
+  margin: 0 auto;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
+}
+.sidebar-subtitle {
+  margin-top: 8px;
+  font-size: 11px;
+  text-align: center;
+  color: #94a3b8;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+/* Área de scroll dos itens */
+.sidebar-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+.sidebar-scroll::-webkit-scrollbar { width: 6px; }
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 3px;
+}
+
+/* Título das seções */
+.sidebar-section {
+  font-size: 9.5px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: #64748b;
+  padding: 14px 14px 6px;
+  margin-top: 4px;
+  font-weight: 500;
+  position: relative;
+}
+.sidebar-section::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 4px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(148, 163, 184, 0.18), transparent);
+}
+
+/* Itens de menu */
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0.85rem;
+  border-radius: 10px;
+  color: #cbd5e1;
+  text-decoration: none;
+  font-size: 0.78rem;
+  font-weight: 400;
+  letter-spacing: .01em;
+  transition: background-color .15s ease, color .15s ease, transform .05s ease;
+  position: relative;
+}
+.sidebar-link i {
+  width: 1.15rem;
+  color: #94a3b8;
+  font-size: .82rem;
+}
+.sidebar-link .sidebar-label { flex: 1 1 auto; }
+.sidebar-link:hover {
+  background-color: rgba(148, 163, 184, 0.1);
+  color: #f8fafc;
+}
+.sidebar-link:hover i { color: #e2e8f0; }
+
+.sidebar-link.active {
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.2), rgba(139, 92, 246, 0.08));
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.35);
+}
+.sidebar-link.active i { color: #a5b4fc; }
+.sidebar-link.active::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #6366f1, #8b5cf6);
+}
+
+/* Bloco de usuário no rodapé */
+.sidebar-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(255, 255, 255, 0.02);
+}
+.sidebar-user-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.sidebar-user-info { min-width: 0; flex: 1 1 auto; }
+.sidebar-user-name {
+  color: #f1f5f9;
+  font-size: .82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-user-logout {
+  color: #f59e0b;
+  text-decoration: none;
+  font-size: .74rem;
+  font-weight: 500;
+}
+.sidebar-user-logout:hover { color: #fbbf24; }
+
+/* Cards gerais (configurações etc.) */
+.settings-card {
+  border-radius: 0.75rem;
+}
+
+.settings-card i {
+  opacity: 0.85;
+}
+
+.settings-card h6 {
+  font-weight: 600;
+}
+
+/* Dashboard & páginas internas */
+.dashboard-container {
+  max-width: 1400px;
+}
+
+.kpi-card {
+  border-radius: 1rem;
+  border: none;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+}
+
+.kpi-card .card-body {
+  padding: 1rem 1.1rem;
+}
+
+.dashboard-card {
+  border-radius: 1rem;
+  border: none;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.05);
+}
+
+/* Badges suaves */
+.badge-soft-success {
+  background-color: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+}
+
+.badge-soft-danger {
+  background-color: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+.badge-soft-warning {
+  background-color: rgba(234, 179, 8, 0.12);
+  color: #ca8a04;
+}
+
+.badge-soft-primary {
+  background-color: rgba(59, 130, 246, 0.12);
+  color: #2563eb;
+}
+
+/* Tabelas dashboard/listagens */
+.table-dashboard thead tr th {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  border-top: none;
+}
+
+.table-dashboard tbody tr td {
+  font-size: 0.85rem;
+}
+
+/* Alertas da direita no dashboard */
+.dashboard-alerts li+li {
+  margin-top: 0.35rem;
+}
+
+/* Responsividade sidebar */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    z-index: 1030;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease-in-out;
+  }
+
+  .sidebar.show {
+    transform: translateX(0);
+  }
+
+  #page-content-wrapper {
+    width: 100%;
+  }
+}
+
+/* Abas de detalhes do contrato */
+.nav-tabs-sync .nav-link {
+  font-size: 0.85rem;
+  padding: 0.5rem 0.9rem;
+  border-radius: 999px 999px 0 0;
+}
+
+.nav-tabs-sync .nav-link i {
+  font-size: 0.8rem;
+}
+
+.nav-tabs-sync .nav-link.active {
+  font-weight: 600;
+}
+
+/* Timeline do histórico do contrato */
+.contrato-timeline li {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.contrato-timeline-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  margin-top: 0.22rem;
+  display: inline-block;
+}
+
+
+/* =========================================================
+   SIDEBAR – COLAPSE LIMPO (DRE)
+   Não altera cores / layout base
+   ========================================================= */
+
+/* Colapse do sidebar (novo) */
+#sidebar.sidebar {
+  transition: width .2s ease;
+}
+#sidebar.sidebar.collapsed {
+  width: 72px;
+  min-width: 72px;
+}
+
+/* Esconder textos quando colapsado */
+#sidebar.sidebar.collapsed .sidebar-subtitle,
+#sidebar.sidebar.collapsed .sidebar-section,
+#sidebar.sidebar.collapsed .sidebar-label,
+#sidebar.sidebar.collapsed .sidebar-link .badge,
+#sidebar.sidebar.collapsed .sidebar-user-info {
+  display: none !important;
+}
+
+/* Brand compacto */
+#sidebar.sidebar.collapsed .sidebar-brand {
+  padding: 12px 6px;
+}
+#sidebar.sidebar.collapsed .sidebar-logo {
+  max-height: 34px;
+}
+
+/* Itens: só ícone, centralizado */
+#sidebar.sidebar.collapsed .sidebar-link {
+  justify-content: center;
+  padding: .65rem 0;
+}
+#sidebar.sidebar.collapsed .sidebar-link i {
+  margin: 0 !important;
+  font-size: 1.05rem;
+}
+#sidebar.sidebar.collapsed .sidebar-link.active::before {
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+}
+
+/* Bloco de usuário no modo colapsado */
+#sidebar.sidebar.collapsed .sidebar-user {
+  justify-content: center;
+  padding: 10px 0;
+}
+
+/* Tooltip do sidebar (Bootstrap) */
+.sidebar-tooltip .tooltip-inner {
+  font-size: .82rem;
+  padding: .45rem .6rem;
+  border-radius: 10px;
+}
+
+.sidebar-tooltip.tooltip {
+  opacity: 1;
+}

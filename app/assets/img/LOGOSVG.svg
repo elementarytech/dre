@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 260" width="100%" height="100%">
+  <defs>
+    <style>
+      .logo-text {
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 130px;
+        fill: #FFFFFF;
+        letter-spacing: 4px;
+      }
+      .logo-a {
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 170px;
+        fill: #FFFFFF;
+      }
+      .logo-subtext {
+        font-family: 'Arial', sans-serif;
+        font-size: 22px;
+        fill: #FFFFFF;
+        letter-spacing: 9px;
+      }
+      .separator-line {
+        stroke: #FFFFFF;
+        stroke-width: 3;
+      }
+    </style>
+  </defs>
+
+  <text x="20" y="160" class="logo-a">A</text>
+  
+  <text x="150" y="160" class="logo-text">SSESCCONT</text>
+  
+  <line x1="25" y1="175" x2="990" y2="175" class="separator-line" />
+  
+  <text x="95" y="230" class="logo-subtext">CONTABILIZANDO O AGRONEGÓCIO</text>
+</svg>

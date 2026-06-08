@@ -1,0 +1,19 @@
+# Credenciais e configurações sensíveis
+app/config/conexao.php
+
+# Logs
+*.log
+webhook_bb.log
+
+# Pasta Claude Code (configurações locais)
+.claude/
+
+# Arquivos temporários
+*.tmp
+*.cache
+
+# OFX (arquivos de extrato bancário)
+OFX/
+
+# Migrations executadas (opcional - remova se quiser versionar)
+# migrations/
