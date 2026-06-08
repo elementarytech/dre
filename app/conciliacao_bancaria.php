@@ -644,6 +644,9 @@ $hojeTopo = date('d/m/Y');
                             <button type="button" class="btn btn-sm btn-outline-info" id="btnConferirVinculos" title="Listar todos os vínculos OFX ativos do banco (novos e legados) com opção de cancelar">
                                 <i class="bi bi-link-45deg me-1"></i>Conferir vínculos
                             </button>
+                            <button type="button" class="btn btn-sm btn-outline-danger" id="btnHistoricoOfx" title="Histórico de importações OFX — permite excluir importação errada com reversão completa (requer senha ADMIN)">
+                                <i class="bi bi-clock-history me-1"></i>Histórico OFX
+                            </button>
                             <div class="segmented" role="tablist">
                                 <button type="button" id="tabOfxBtn" role="tab" aria-selected="true" aria-controls="tabOfx" class="active"><i class="bi bi-file-earmark-text me-1"></i>Conciliação (OFX)</button>
                                 <button type="button" id="tabCnabBtn" role="tab" aria-selected="false" aria-controls="tabCnab"><i class="bi bi-file-binary me-1"></i>CNAB</button>
@@ -1094,6 +1097,55 @@ $hojeTopo = date('d/m/Y');
                             <tbody id="rvTbody"><tr><td colspan="10" class="text-center text-muted small">Carregando…</td></tr></tbody>
                         </table>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Histórico de Importações OFX -->
+    <div class="modal fade" id="modalHistoricoOfx" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content" style="border:0;border-radius:14px;overflow:hidden">
+                <div class="modal-header" style="background:#dc2626;color:#fff">
+                    <h5 class="modal-title fw-bold mb-0">
+                        <i class="bi bi-clock-history me-2"></i>Histórico de Importações OFX
+                    </h5>
+                    <button class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+                <div class="modal-body" style="background:#f8fafc">
+                    <div class="alert alert-warning py-2 small mb-3">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        <strong>Atenção:</strong> excluir uma importação OFX é uma ação destrutiva.
+                        Todos os vínculos feitos com movimentos dessa importação serão
+                        <strong>desfeitos</strong> (vínculos cancelados, status das contas revertido,
+                        avulsos criados pelo OFX excluídos). Requer senha de um usuário <strong>ADMIN</strong>.
+                    </div>
+                    <div id="histOfxMensagem" class="text-muted small mb-2"></div>
+                    <div class="table-responsive border rounded bg-white">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Importado em</th>
+                                    <th>Usuário</th>
+                                    <th>Banco</th>
+                                    <th>Arquivo</th>
+                                    <th class="text-end">Entradas</th>
+                                    <th class="text-end">Saídas</th>
+                                    <th class="text-center">Movs.</th>
+                                    <th class="text-center" title="Movimentos conciliados">Concil.</th>
+                                    <th class="text-center" title="Vínculos novos ativos">Vínc.</th>
+                                    <th class="text-center" title="Avulsos criados pelo OFX">Avulsos</th>
+                                    <th class="text-end">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="histOfxBody">
+                                <tr><td colspan="11" class="text-center text-muted py-4">Carregando…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
                 </div>
             </div>
         </div>
@@ -3224,6 +3276,140 @@ $hojeTopo = date('d/m/Y');
                 await abrirModalCreditosPendentes(impFk);
                 return;
             }
+        });
+
+        // ====== Botão "Histórico OFX" — listar e excluir importações ======
+        async function carregarHistoricoOfx() {
+            const bancoFk = parseInt(document.getElementById('selBancoOfx')?.value || '0', 10);
+            const tb = document.getElementById('histOfxBody');
+            const msgEl = document.getElementById('histOfxMensagem');
+            tb.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-3">Carregando…</td></tr>';
+            if (msgEl) msgEl.textContent = bancoFk > 0
+                ? 'Mostrando importações do banco selecionado.'
+                : 'Mostrando todas as importações (todos os bancos).';
+
+            try {
+                const params = new URLSearchParams({ acao: 'listar_importacoes_ofx', limit: '200' });
+                if (bancoFk > 0) params.set('banco_fk', String(bancoFk));
+                const r = await fetch(endpoint + '?' + params.toString(), { credentials: 'same-origin' });
+                const j = await r.json();
+                if (!j.ok) {
+                    tb.innerHTML = '<tr><td colspan="11" class="text-center text-danger small py-3">Erro: ' + (j.msg || 'falha ao carregar') + '</td></tr>';
+                    return;
+                }
+                const rows = j.rows || [];
+                if (!rows.length) {
+                    tb.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-3">Nenhuma importação encontrada.</td></tr>';
+                    return;
+                }
+                const brl = v => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+                const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+                const fmtDt = s => { if (!s) return '—'; const d = new Date(String(s).replace(' ', 'T')); return d.toLocaleString('pt-BR'); };
+
+                tb.innerHTML = rows.map(r => {
+                    const temVinculo = (Number(r.qtd_conciliados) > 0)
+                                    || (Number(r.qtd_vinculos_ativos) > 0)
+                                    || (Number(r.qtd_avulsos_criados) > 0);
+                    const corBadge = temVinculo ? 'bg-warning text-dark' : 'bg-light text-secondary border';
+                    const txtBadge = temVinculo ? 'Com vínculos' : 'Sem vínculos';
+                    return `
+                        <tr>
+                            <td class="small">${fmtDt(r.importado_em)}</td>
+                            <td class="small">${esc(r.usuario || '—')}</td>
+                            <td class="small">${esc(r.banco_nome || '—')}</td>
+                            <td class="small" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.arquivo)}">${esc(r.arquivo || '—')}</td>
+                            <td class="small text-end font-monospace">${brl(r.entradas)}</td>
+                            <td class="small text-end font-monospace">${brl(r.saidas)}</td>
+                            <td class="small text-center">${Number(r.qtd_movimentos)}</td>
+                            <td class="small text-center">${Number(r.qtd_conciliados)}</td>
+                            <td class="small text-center">${Number(r.qtd_vinculos_ativos)}</td>
+                            <td class="small text-center">${Number(r.qtd_avulsos_criados)}</td>
+                            <td class="text-end">
+                                <span class="badge ${corBadge} me-1">${txtBadge}</span>
+                                <button type="button" class="btn btn-sm btn-outline-danger"
+                                        onclick="excluirImportacaoOfx(${Number(r.id)}, ${temVinculo ? 1 : 0})"
+                                        title="Excluir esta importação e reverter o que foi feito">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </td>
+                        </tr>`;
+                }).join('');
+            } catch (err) {
+                tb.innerHTML = '<tr><td colspan="11" class="text-center text-danger small py-3">Erro de rede: ' + String(err.message || err) + '</td></tr>';
+            }
+        }
+
+        window.excluirImportacaoOfx = async function(importId, temVinculo) {
+            const aviso = temVinculo
+                ? `<div class="alert alert-warning small text-start mb-2">
+                       <i class="bi bi-exclamation-triangle me-1"></i>
+                       Esta importação <strong>tem vínculos ativos</strong>. Ao excluir, todos os vínculos
+                       serão cancelados, as parcelas voltarão ao status anterior e os avulsos
+                       criados pelo OFX serão excluídos.
+                   </div>`
+                : `<div class="alert alert-light border small text-start mb-2">
+                       <i class="bi bi-info-circle me-1"></i>
+                       Esta importação <strong>não tem vínculos ativos</strong>. Será apenas removida
+                       do sistema (movimentos e cabeçalho).
+                   </div>`;
+
+            const { value: formValues, isConfirmed } = await Swal.fire({
+                title: 'Excluir importação OFX?',
+                icon: 'warning',
+                html: `
+                    ${aviso}
+                    <div class="text-start small">
+                        <label class="form-label small fw-bold mt-2">Motivo (opcional)</label>
+                        <input id="swal-hist-motivo" class="form-control form-control-sm" placeholder="Ex.: arquivo OFX errado, datas erradas, vou reimportar correto">
+                        <label class="form-label small fw-bold mt-2">Senha de um ADMIN <span class="text-danger">*</span></label>
+                        <input id="swal-hist-senha" type="password" class="form-control form-control-sm" placeholder="Senha de qualquer usuário ADMIN">
+                    </div>
+                `,
+                showCancelButton: true,
+                confirmButtonText: 'Excluir',
+                cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#dc2626',
+                focusConfirm: false,
+                preConfirm: () => {
+                    const senha = document.getElementById('swal-hist-senha').value.trim();
+                    const motivo = document.getElementById('swal-hist-motivo').value.trim();
+                    if (!senha) { Swal.showValidationMessage('Senha obrigatória.'); return false; }
+                    return { senha, motivo };
+                }
+            });
+
+            if (!isConfirmed || !formValues) return;
+
+            try {
+                const fd = new FormData();
+                fd.append('acao', 'excluir_importacao_ofx');
+                fd.append('importacao_id', String(importId));
+                fd.append('senha', formValues.senha);
+                fd.append('motivo', formValues.motivo);
+                const r = await fetch(endpoint, { method: 'POST', body: fd, credentials: 'same-origin' });
+                const j = await r.json();
+                if (!j.ok) {
+                    Swal.fire({ icon: 'error', title: 'Não foi possível excluir', text: j.msg || 'Erro desconhecido' });
+                    return;
+                }
+                await Swal.fire({
+                    icon: 'success',
+                    title: 'Importação excluída',
+                    html: `<div class="small text-start">${(j.msg || 'Concluído').replace(/\n/g,'<br>')}<br><br><b>Autorizado por:</b> ${(j.autorizado_por||'—')}</div>`,
+                    confirmButtonText: 'OK'
+                });
+                await carregarHistoricoOfx();
+                // Atualiza tela principal de conciliação se a função estiver disponível
+                if (typeof carregarMovimentos === 'function') { try { await carregarMovimentos(); } catch(e) {} }
+            } catch (err) {
+                Swal.fire({ icon: 'error', title: 'Erro', text: String(err.message || err) });
+            }
+        };
+
+        document.getElementById('btnHistoricoOfx')?.addEventListener('click', () => {
+            const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalHistoricoOfx'));
+            modal.show();
+            carregarHistoricoOfx();
         });
 
         // ====== Botão "Conferir vínculos" (Briefing 11) ======

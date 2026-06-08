@@ -454,10 +454,22 @@ try {
                 }
             } else {
                 $matchTipo = 'RECEBER';
-                $sqlBase = "
+                // [T-011] Match em cascata com tolerância de 5 centavos:
+                //   1) valor cheio + sem OFX (caso comum)
+                //   2) saldo restante (cobre fechamento de parcial — PIX após adiantamento)
+                //   3) documento exato
+                //   4) valor já recebido + vencimento ±3 dias (fallback histórico)
+                // Cliente extraído do CNPJ/CPF da descrição do OFX prioriza parcelas do mesmo cliente.
+                $cnpjCpfDescr = '';
+                if (preg_match('/(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2})/', (string)$r['COM_DESCRICAO'], $mDoc)) {
+                    $cnpjCpfDescr = preg_replace('/\D+/', '', $mDoc[1]);
+                }
+
+                $selectFields = "
                     SELECT cr.CRE_ID AS id, cr.CRE_OBSERVACAO AS descricao,
                            cr.CRE_VENCIMENTO AS vencimento, cr.CRE_RECEBIDO_EM AS data_recebimento,
                            cr.CRE_VALOR AS valor, cr.CRE_VALOR_RECEBIDO AS valor_recebido,
+                           GREATEST(0, cr.CRE_VALOR - COALESCE(cr.CRE_VALOR_RECEBIDO,0)) AS saldo_restante,
                            cr.CRE_STATUS AS status, cr.CRE_DOCUMENTO AS documento,
                            cpa.CPA_NUM AS num_parcela, cpa.CPA_TOTAL AS qtd_parcelas,
                            COALESCE(cr.CRE_CLIENTE_NOME, '') AS cliente
@@ -465,17 +477,55 @@ try {
                     LEFT JOIN contrato_parcelas cpa
                         ON cpa.CPA_CTR_ID = cr.CRE_CONTRATO_FK
                        AND cpa.CPA_VENCIMENTO = cr.CRE_VENCIMENTO
-                    WHERE (cr.CRE_BANCO_FK = :banco OR cr.CRE_BANCO_FK IS NULL)
-                      AND cr.CRE_OFX_MOVIMENTO_FK IS NULL
-                      AND ABS(IFNULL(NULLIF(cr.CRE_VALOR_RECEBIDO,0), cr.CRE_VALOR) - :valor) < 0.01
+                    LEFT JOIN cliente cl ON cl.CLI_ID = cr.CRE_CLIENTE_FK
                 ";
-                if ($doc !== '') {
-                    $st2 = $pdo->prepare($sqlBase . " AND cr.CRE_DOCUMENTO = :doc LIMIT 1");
-                    $st2->execute([':banco' => $bancoFk, ':valor' => $valorAbs, ':doc' => $doc]);
+
+                $whereBase = " WHERE (cr.CRE_BANCO_FK = :banco OR cr.CRE_BANCO_FK IS NULL)
+                                 AND UPPER(COALESCE(cr.CRE_STATUS,'')) IN ('ABERTO','ATRASADO','PROGRAMADO','PENDENTE') ";
+
+                $orderPrior = "";
+                if ($cnpjCpfDescr !== '') {
+                    $orderPrior = " ORDER BY (REPLACE(REPLACE(REPLACE(IFNULL(cl.CLI_DOCUMENTO,''),'.',''),'/',''),'-','') = :cnpjDescr OR REPLACE(REPLACE(REPLACE(IFNULL(cr.CRE_CPF_CNPJ,''),'.',''),'/',''),'-','') = :cnpjDescr) DESC, ABS(DATEDIFF(cr.CRE_VENCIMENTO, :dataMov)) ASC ";
+                } else {
+                    $orderPrior = " ORDER BY ABS(DATEDIFF(cr.CRE_VENCIMENTO, :dataMov)) ASC ";
+                }
+
+                // Tentativa 1: valor cheio da parcela bate (parcela sem nenhum recebimento, fluxo normal)
+                $sql1 = $selectFields . $whereBase . " AND cr.CRE_OFX_MOVIMENTO_FK IS NULL
+                                                       AND ABS(cr.CRE_VALOR - :valor) < 0.05 "
+                      . $orderPrior . " LIMIT 1";
+                $st2 = $pdo->prepare($sql1);
+                $params1 = [':banco' => $bancoFk, ':valor' => $valorAbs, ':dataMov' => $dataMov];
+                if ($cnpjCpfDescr !== '') $params1[':cnpjDescr'] = $cnpjCpfDescr;
+                $st2->execute($params1);
+                $match = $st2->fetch(PDO::FETCH_ASSOC) ?: null;
+
+                // Tentativa 2: saldo restante bate (cobre o "fechamento" de parcela com adiantamento parcial,
+                // mesmo que a parcela já tenha 1 OFX vinculado anteriormente).
+                if (!$match) {
+                    $sql2 = $selectFields . $whereBase . " AND COALESCE(cr.CRE_VALOR_RECEBIDO,0) > 0
+                                                           AND ABS(GREATEST(0, cr.CRE_VALOR - COALESCE(cr.CRE_VALOR_RECEBIDO,0)) - :valor) < 0.05 "
+                          . $orderPrior . " LIMIT 1";
+                    $st2 = $pdo->prepare($sql2);
+                    $st2->execute($params1);
                     $match = $st2->fetch(PDO::FETCH_ASSOC) ?: null;
                 }
+
+                // Tentativa 3: documento exato (fallback)
+                if (!$match && $doc !== '') {
+                    $sql3 = $selectFields . $whereBase . " AND cr.CRE_OFX_MOVIMENTO_FK IS NULL
+                                                           AND cr.CRE_DOCUMENTO = :doc LIMIT 1";
+                    $st2 = $pdo->prepare($sql3);
+                    $st2->execute([':banco' => $bancoFk, ':doc' => $doc]);
+                    $match = $st2->fetch(PDO::FETCH_ASSOC) ?: null;
+                }
+
+                // Tentativa 4: valor já recebido + vencimento ±3 dias (compatibilidade histórica)
                 if (!$match) {
-                    $st2 = $pdo->prepare($sqlBase . " AND cr.CRE_VENCIMENTO BETWEEN :di AND :df LIMIT 1");
+                    $sql4 = $selectFields . $whereBase . " AND cr.CRE_OFX_MOVIMENTO_FK IS NULL
+                                                           AND ABS(IFNULL(NULLIF(cr.CRE_VALOR_RECEBIDO,0), cr.CRE_VALOR) - :valor) < 0.05
+                                                           AND cr.CRE_VENCIMENTO BETWEEN :di AND :df LIMIT 1";
+                    $st2 = $pdo->prepare($sql4);
                     $st2->execute([':banco' => $bancoFk, ':valor' => $valorAbs, ':di' => $di, ':df' => $df]);
                     $match = $st2->fetch(PDO::FETCH_ASSOC) ?: null;
                 }
@@ -1945,6 +1995,217 @@ try {
         } catch (Throwable $e) {
             $pdo->rollBack();
             json_out(['ok' => false, 'msg' => $e->getMessage()], 422);
+        }
+    }
+
+    // ============================================================
+    // HISTÓRICO DE IMPORTAÇÕES OFX (T-NOVO)
+    // Listagem das importações + exclusão controlada por senha admin.
+    // ============================================================
+
+    if ($acao === 'listar_importacoes_ofx') {
+        // Lista importações com contadores: total de movimentos, conciliados, vínculos ativos.
+        $bancoFk = (int)($_GET['banco_fk'] ?? 0);
+        $limit   = max(1, min(500, (int)($_GET['limit'] ?? 100)));
+
+        $params = [];
+        $where  = "";
+        if ($bancoFk > 0) {
+            $where = " WHERE i.COI_BANCO_FK = :banco ";
+            $params[':banco'] = $bancoFk;
+        }
+
+        $sql = "
+            SELECT i.COI_CODIGO_PK   AS id,
+                   i.COI_DATA_CADASTRO AS importado_em,
+                   i.COI_USUARIO     AS usuario,
+                   i.COI_NOME_ARQUIVO AS arquivo,
+                   i.COI_BANCO_FK    AS banco_fk,
+                   COALESCE(NULLIF(b.BAN_APELIDO,''), b.BAN_NOME) AS banco_nome,
+                   i.COI_CONTA_REF   AS conta,
+                   i.COI_DATA_INICIAL AS periodo_ini,
+                   i.COI_DATA_FINAL   AS periodo_fim,
+                   i.COI_SALDO_INICIAL AS saldo_ini,
+                   i.COI_SALDO_FINAL  AS saldo_fim,
+                   i.COI_TOTAL_ENTRADAS AS entradas,
+                   i.COI_TOTAL_SAIDAS   AS saidas,
+                   i.COI_STATUS      AS status,
+                   (SELECT COUNT(*) FROM tb_conciliacao_ofx_movimento m
+                     WHERE m.COM_IMPORTACAO_FK = i.COI_CODIGO_PK) AS qtd_movimentos,
+                   (SELECT COUNT(*) FROM tb_conciliacao_ofx_movimento m
+                     WHERE m.COM_IMPORTACAO_FK = i.COI_CODIGO_PK
+                       AND m.COM_CONCILIADO = 'SIM') AS qtd_conciliados,
+                   (SELECT COUNT(*) FROM tb_conciliacao_vinculo v
+                     INNER JOIN tb_conciliacao_ofx_movimento m
+                             ON m.COM_CODIGO_PK = v.VIN_OFX_MOVIMENTO_FK
+                     WHERE m.COM_IMPORTACAO_FK = i.COI_CODIGO_PK
+                       AND v.VIN_STATUS = 'ATIVO') AS qtd_vinculos_ativos,
+                   (SELECT COUNT(*) FROM tb_contas_receber cr
+                     WHERE cr.CRE_ORIGEM = 'CONCILIACAO'
+                       AND cr.CRE_OFX_MOVIMENTO_FK IN
+                         (SELECT COM_CODIGO_PK FROM tb_conciliacao_ofx_movimento
+                          WHERE COM_IMPORTACAO_FK = i.COI_CODIGO_PK)) AS qtd_avulsos_criados
+              FROM tb_conciliacao_ofx_importacao i
+              LEFT JOIN tb_banco b ON b.BAN_ID = i.COI_BANCO_FK
+              {$where}
+              ORDER BY i.COI_DATA_CADASTRO DESC, i.COI_CODIGO_PK DESC
+              LIMIT {$limit}
+        ";
+        $st = $pdo->prepare($sql);
+        $st->execute($params);
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        json_out(['ok' => true, 'rows' => $rows]);
+    }
+
+    if ($acao === 'excluir_importacao_ofx') {
+        // Exclui uma importação OFX inteira (todos os movimentos) com reversão completa
+        // dos vínculos (novos via tb_conciliacao_vinculo + legados via *_OFX_MOVIMENTO_FK)
+        // e exclusão dos avulsos criados pelo "criar_receber_em_lote".
+        // Requer senha de qualquer usuário ADMIN ativo.
+
+        $importId = (int)($_POST['importacao_id'] ?? 0);
+        $senha    = (string)($_POST['senha'] ?? '');
+        $motivo   = trim((string)($_POST['motivo'] ?? ''));
+
+        if ($importId <= 0)  json_out(['ok' => false, 'msg' => 'ID da importação inválido.'], 400);
+        if ($senha === '')   json_out(['ok' => false, 'msg' => 'Informe a senha de um usuário ADMIN.'], 400);
+
+        // Valida senha contra qualquer ADMIN ativo (mesmo padrão do reabrir_conta)
+        $stU = $pdo->prepare("SELECT USU_ID, USU_NOME, USU_SENHA_HASH
+                              FROM usuarios
+                              WHERE USU_PERFIL = 'ADMIN' AND USU_STATUS = 'ATIVO'");
+        $stU->execute();
+        $admins = $stU->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $adminValido = null;
+        foreach ($admins as $u) {
+            if (password_verify($senha, (string)($u['USU_SENHA_HASH'] ?? ''))) {
+                $adminValido = $u;
+                break;
+            }
+        }
+        if (!$adminValido) {
+            json_out(['ok' => false, 'msg' => 'Senha inválida. Nenhum usuário ADMIN autenticado.'], 401);
+        }
+        $adminNome = (string)$adminValido['USU_NOME'];
+
+        // Confere se a importação existe
+        $stImp = $pdo->prepare("SELECT COI_CODIGO_PK, COI_NOME_ARQUIVO
+                                FROM tb_conciliacao_ofx_importacao WHERE COI_CODIGO_PK = ? LIMIT 1");
+        $stImp->execute([$importId]);
+        $imp = $stImp->fetch(PDO::FETCH_ASSOC);
+        if (!$imp) json_out(['ok' => false, 'msg' => 'Importação não encontrada.'], 404);
+
+        $pdo->beginTransaction();
+        try {
+            // 1) Lista todos os movimentos dessa importação
+            $stMovs = $pdo->prepare("SELECT COM_CODIGO_PK FROM tb_conciliacao_ofx_movimento
+                                     WHERE COM_IMPORTACAO_FK = ?");
+            $stMovs->execute([$importId]);
+            $movIds = array_map(static fn($r) => (int)$r['COM_CODIGO_PK'], $stMovs->fetchAll(PDO::FETCH_ASSOC));
+
+            $totalVinculosCancelados = 0;
+            $totalLegadosRevertidos  = 0;
+            $totalAvulsosExcluidos   = 0;
+
+            foreach ($movIds as $movFk) {
+                // 2) Cancela vínculos novos (tb_conciliacao_vinculo) e reverte alocações
+                $stV = $pdo->prepare("SELECT VIN_CODIGO_PK, VIN_LANCAMENTO_TIPO, VIN_LANCAMENTO_FK, VIN_VALOR_ALOCADO
+                                      FROM tb_conciliacao_vinculo
+                                      WHERE VIN_OFX_MOVIMENTO_FK = ? AND VIN_STATUS = 'ATIVO' FOR UPDATE");
+                $stV->execute([$movFk]);
+                $vinculos = $stV->fetchAll(PDO::FETCH_ASSOC);
+
+                foreach ($vinculos as $v) {
+                    $pdo->prepare("UPDATE tb_conciliacao_vinculo
+                                   SET VIN_STATUS = 'CANCELADO',
+                                       VIN_CANCELADO_EM = NOW(),
+                                       VIN_CANCELADO_POR = ?
+                                   WHERE VIN_CODIGO_PK = ?")
+                        ->execute([$adminNome . ' (exclusão import #' . $importId . ')',
+                                   (int)$v['VIN_CODIGO_PK']]);
+
+                    $tipo = $v['VIN_LANCAMENTO_TIPO'] === 'CONTA_PAGAR' ? 'PAGAR' : 'RECEBER';
+                    if (function_exists('reverterAlocacaoConta')) {
+                        reverterAlocacaoConta($pdo, $tipo, (int)$v['VIN_LANCAMENTO_FK'], (float)$v['VIN_VALOR_ALOCADO']);
+                    }
+                    $totalVinculosCancelados++;
+                }
+
+                // 3) Trata vínculo legado em CONTAS A PAGAR (CPG_OFX_MOVIMENTO_FK)
+                $stLP = $pdo->prepare("SELECT CPG_CODIGO_PK, CPG_VALOR_PAGO, CPG_VALOR_PARCELA
+                                       FROM tb_contas_pagar WHERE CPG_OFX_MOVIMENTO_FK = ? FOR UPDATE");
+                $stLP->execute([$movFk]);
+                foreach ($stLP->fetchAll(PDO::FETCH_ASSOC) as $lp) {
+                    $valor = (float)($lp['CPG_VALOR_PAGO'] ?? 0);
+                    if ($valor <= 0) $valor = (float)($lp['CPG_VALOR_PARCELA'] ?? 0);
+                    if (function_exists('reverterAlocacaoConta') && $valor > 0) {
+                        reverterAlocacaoConta($pdo, 'PAGAR', (int)$lp['CPG_CODIGO_PK'], $valor);
+                    }
+                    $pdo->prepare("UPDATE tb_contas_pagar SET CPG_OFX_MOVIMENTO_FK = NULL WHERE CPG_CODIGO_PK = ?")
+                        ->execute([(int)$lp['CPG_CODIGO_PK']]);
+                    $totalLegadosRevertidos++;
+                }
+
+                // 4) Trata vínculo legado em CONTAS A RECEBER (CRE_OFX_MOVIMENTO_FK)
+                //    Distinção: avulsos criados via "criar_receber_em_lote" (CRE_ORIGEM='CONCILIACAO')
+                //    devem ser EXCLUÍDOS — eles existem só por causa do OFX.
+                //    Os demais (parcelas reais com OFX vinculado) só desvinculam e revertem.
+                $stLR = $pdo->prepare("SELECT CRE_ID, CRE_ORIGEM, CRE_VALOR_RECEBIDO, CRE_VALOR
+                                       FROM tb_contas_receber WHERE CRE_OFX_MOVIMENTO_FK = ? FOR UPDATE");
+                $stLR->execute([$movFk]);
+                foreach ($stLR->fetchAll(PDO::FETCH_ASSOC) as $lr) {
+                    if (strtoupper((string)$lr['CRE_ORIGEM']) === 'CONCILIACAO') {
+                        // Avulso criado pelo OFX: exclui inteiro
+                        $pdo->prepare("DELETE FROM tb_contas_receber WHERE CRE_ID = ?")
+                            ->execute([(int)$lr['CRE_ID']]);
+                        $totalAvulsosExcluidos++;
+                    } else {
+                        // Parcela real: reverte alocação e desvincula
+                        $valor = (float)($lr['CRE_VALOR_RECEBIDO'] ?? 0);
+                        if ($valor <= 0) $valor = (float)($lr['CRE_VALOR'] ?? 0);
+                        if (function_exists('reverterAlocacaoConta') && $valor > 0) {
+                            reverterAlocacaoConta($pdo, 'RECEBER', (int)$lr['CRE_ID'], $valor);
+                        }
+                        $pdo->prepare("UPDATE tb_contas_receber SET CRE_OFX_MOVIMENTO_FK = NULL WHERE CRE_ID = ?")
+                            ->execute([(int)$lr['CRE_ID']]);
+                        $totalLegadosRevertidos++;
+                    }
+                }
+            }
+
+            // 5) Exclui movimentos da importação
+            $stDelMov = $pdo->prepare("DELETE FROM tb_conciliacao_ofx_movimento WHERE COM_IMPORTACAO_FK = ?");
+            $stDelMov->execute([$importId]);
+            $movsExcluidos = $stDelMov->rowCount();
+
+            // 6) Exclui o registro da importação
+            $stDelImp = $pdo->prepare("DELETE FROM tb_conciliacao_ofx_importacao WHERE COI_CODIGO_PK = ?");
+            $stDelImp->execute([$importId]);
+
+            $pdo->commit();
+
+            json_out([
+                'ok' => true,
+                'msg' => sprintf(
+                    'Importação #%d (%s) excluída. %d movimento(s) removido(s), %d vínculo(s) cancelado(s), %d vínculo(s) legado(s) revertido(s), %d avulso(s) excluído(s).',
+                    $importId,
+                    (string)$imp['COI_NOME_ARQUIVO'],
+                    $movsExcluidos,
+                    $totalVinculosCancelados,
+                    $totalLegadosRevertidos,
+                    $totalAvulsosExcluidos
+                ),
+                'autorizado_por'      => $adminNome,
+                'movimentos_excluidos'=> $movsExcluidos,
+                'vinculos_cancelados' => $totalVinculosCancelados,
+                'legados_revertidos'  => $totalLegadosRevertidos,
+                'avulsos_excluidos'   => $totalAvulsosExcluidos,
+                'motivo'              => $motivo,
+            ]);
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            json_out(['ok' => false, 'msg' => 'Falha na exclusão: ' . $e->getMessage()], 500);
         }
     }
 
