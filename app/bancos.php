@@ -67,6 +67,112 @@ require_once __DIR__ . '/config/auth.php';
         .mono {
             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
         }
+
+        /* ------ Cards de saldo ------ */
+        .banco-card {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 14px;
+            padding: 18px 18px 14px;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-height: 190px;
+            transition: box-shadow .15s, transform .15s, border-color .15s;
+        }
+        .banco-card:hover {
+            box-shadow: 0 6px 22px rgba(15, 23, 42, 0.08);
+            transform: translateY(-1px);
+            border-color: #c7d2fe;
+        }
+        .banco-card .bc-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+        .banco-card .bc-apelido {
+            font-weight: 700;
+            font-size: 1rem;
+            color: #0f172a;
+            line-height: 1.2;
+            display: flex;
+            align-items: center;
+            gap: .55rem;
+        }
+        .banco-card .bc-codbanco {
+            font-size: .75rem;
+            color: #64748b;
+            font-weight: 600;
+            background: #f1f5f9;
+            border-radius: 8px;
+            padding: 3px 8px;
+            white-space: nowrap;
+        }
+        .banco-card .bc-conta {
+            color: #475569;
+            font-size: .82rem;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .banco-card .bc-saldo-lbl {
+            font-size: .72rem;
+            text-transform: uppercase;
+            letter-spacing: .06em;
+            color: #6b7280;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+        .banco-card .bc-saldo-val {
+            font-size: 1.65rem;
+            font-weight: 700;
+            line-height: 1.05;
+            font-variant-numeric: tabular-nums;
+            color: #16a34a;
+        }
+        .banco-card .bc-saldo-val.neg {
+            color: #dc2626;
+        }
+        .banco-card .bc-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: auto;
+        }
+        .banco-card .bc-actions .btn {
+            flex: 1;
+            font-size: .78rem;
+            border-radius: 8px;
+            padding: .42rem .6rem;
+        }
+        .bc-total-strip {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            color: #fff;
+            border-radius: 14px;
+            padding: 14px 20px;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.10);
+        }
+        .bc-total-strip .lbl {
+            font-size: .72rem;
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            opacity: .85;
+        }
+        .bc-total-strip .val {
+            font-size: 1.6rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        @media (max-width: 575.98px) {
+            .banco-card { min-height: auto; }
+            .banco-card .bc-saldo-val { font-size: 1.4rem; }
+            .bc-total-strip .val { font-size: 1.25rem; }
+        }
     </style>
 </head>
 
@@ -101,17 +207,37 @@ require_once __DIR__ . '/config/auth.php';
 
                 <div class="d-flex flex-wrap justify-content-between align-items-start mb-3 gap-2">
                     <div>
-                        <h5 class="mb-1 mt-1">Cobrança bancária</h5>
+                        <h5 class="mb-1 mt-1">Bancos e Cobrança</h5>
                         <p class="help mb-0">
-                            Cadastre os dados completos de cobrança (banco, convênio, carteira, agência, conta, cedente, configurações CNAB)
-                            para uso futuro em boletos e remessa/retorno.
+                            Saldo atual de cada banco e transferências entre contas. Ao confirmar uma transferência,
+                            saldos são atualizados automaticamente em Fluxo de Caixa, BI e Conciliação.
                         </p>
                     </div>
-                    <div class="mt-2 mt-sm-0">
+                    <div class="mt-2 mt-sm-0 d-flex gap-2">
+                        <button id="btnAtualizarSaldos" type="button" class="btn btn-sm btn-outline-secondary" title="Recarregar saldos">
+                            <i class="fa-solid fa-rotate me-1"></i>Atualizar
+                        </button>
                         <button id="btnNovoBanco" type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#modalBanco">
                             <i class="fa-solid fa-plus me-1"></i>Novo cadastro
                         </button>
                     </div>
+                </div>
+
+                <!-- Faixa de saldo total -->
+                <div class="bc-total-strip" id="bcTotalStrip">
+                    <div>
+                        <div class="lbl"><i class="fa-solid fa-coins me-1"></i>Saldo total nas contas ativas</div>
+                        <div class="val" id="bcTotalVal">R$ 0,00</div>
+                    </div>
+                    <div class="text-end">
+                        <div class="lbl">Consulta</div>
+                        <div class="small" id="bcConsultaEm">—</div>
+                    </div>
+                </div>
+
+                <!-- Grade de cards de bancos com saldo -->
+                <div id="bancosCards" class="row g-3 mb-4">
+                    <div class="col-12 text-muted small">Carregando bancos…</div>
                 </div>
 
                 <!-- Filtros -->
@@ -179,6 +305,70 @@ require_once __DIR__ . '/config/auth.php';
                     © <?= date('Y') ?> DRE - Sistema Financeiro
                 </footer>
 
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Transferência entre Bancos -->
+    <div class="modal fade" id="modalTransferencia" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content" style="border:0;border-radius:14px;overflow:hidden">
+                <div class="modal-header" style="background:#0f172a;color:#fff">
+                    <h5 class="modal-title fw-bold mb-0">
+                        <i class="fa-solid fa-arrow-right-arrow-left me-2"></i>Transferência entre Bancos
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+                <div class="modal-body" style="background:#f8fafc">
+                    <form id="frmTransferencia" autocomplete="off">
+                        <input type="hidden" id="trbOrigemId" value="">
+
+                        <div class="alert alert-light border py-2 small mb-3">
+                            <i class="fa-solid fa-info-circle me-1"></i>
+                            A transferência debita o saldo do banco origem e credita no destino. Os ajustes aparecem
+                            no extrato bancário e atualizam o saldo ERP em todas as telas.
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold">Banco de origem</label>
+                            <div class="form-control bg-white" id="trbOrigemLabel" style="height:auto;padding:.5rem .75rem">—</div>
+                            <div class="help-mini mt-1">Saldo atual: <strong id="trbSaldoOrigem">R$ 0,00</strong></div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold" for="trbDestino">Banco de destino *</label>
+                            <select class="form-select" id="trbDestino" required>
+                                <option value="">— Selecione —</option>
+                            </select>
+                        </div>
+
+                        <div class="row g-2">
+                            <div class="col-md-7">
+                                <label class="form-label small fw-semibold" for="trbValor">Valor *</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">R$</span>
+                                    <input type="text" class="form-control text-end mono" id="trbValor" placeholder="0,00" required>
+                                </div>
+                            </div>
+                            <div class="col-md-5">
+                                <label class="form-label small fw-semibold" for="trbData">Data *</label>
+                                <input type="date" class="form-control" id="trbData" required>
+                                <div class="help-mini mt-1" id="trbValorAlerta"></div>
+                            </div>
+                        </div>
+
+                        <div class="mt-3">
+                            <label class="form-label small fw-semibold" for="trbDescricao">Descrição (opcional)</label>
+                            <input type="text" class="form-control" id="trbDescricao" placeholder="Ex.: pró-labore, reembolso, ajuste mensal">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button class="btn btn-sm btn-success" id="btnConfirmarTransferencia">
+                        <i class="fa-solid fa-check me-1"></i>Confirmar transferência
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -1105,12 +1295,197 @@ require_once __DIR__ . '/config/auth.php';
             if (el) el.addEventListener('input', montarEnderecoCedenteHidden);
         });
 
+        // =====================================================
+        //   CARDS DE BANCOS COM SALDO + TRANSFERÊNCIA
+        // =====================================================
+        const ENDPOINT_TRB = 'endpoints/transferencia_bancaria.php';
+        let BANCOS_CACHE = [];
+
+        const fmtBRL = v => Number(v || 0).toLocaleString('pt-BR', { style:'currency', currency:'BRL' });
+        const fmtDataBR = s => { if (!s) return '—'; const d = new Date(s + 'T00:00:00'); return d.toLocaleDateString('pt-BR'); };
+        const escHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+        async function carregarCardsBancos() {
+            const grid = document.getElementById('bancosCards');
+            grid.innerHTML = '<div class="col-12 text-muted small"><i class="fa-solid fa-spinner fa-spin me-1"></i> Carregando saldos…</div>';
+            try {
+                const j = await api({ acao: 'listar_com_saldo' });
+                BANCOS_CACHE = j.rows || [];
+                document.getElementById('bcTotalVal').textContent = fmtBRL(j.total_saldo || 0);
+                document.getElementById('bcConsultaEm').textContent = fmtDataBR(j.consulta_em || '');
+
+                if (!BANCOS_CACHE.length) {
+                    grid.innerHTML = '<div class="col-12 text-muted small">Nenhum banco ativo cadastrado.</div>';
+                    return;
+                }
+
+                grid.innerHTML = BANCOS_CACHE.map(b => {
+                    const ag = (b.BAN_AGENCIA || '') + (b.BAN_AGENCIA_DV ? '-' + b.BAN_AGENCIA_DV : '');
+                    const cc = (b.BAN_CONTA   || '') + (b.BAN_CONTA_DV   ? '-' + b.BAN_CONTA_DV   : '');
+                    const sal = Number(b.SALDO_ATUAL || 0);
+                    const neg = sal < 0 ? 'neg' : '';
+                    return `
+                        <div class="col-12 col-md-6 col-xl-4">
+                            <div class="banco-card">
+                                <div class="bc-head">
+                                    <div class="bc-apelido">
+                                        <i class="fa-solid fa-building-columns text-primary"></i>
+                                        ${escHTML(b.BAN_APELIDO || b.BAN_NOME || 'Banco #' + b.BAN_ID)}
+                                    </div>
+                                    <span class="bc-codbanco">${escHTML(b.BAN_CODIGO || '—')} — ${escHTML((b.BAN_NOME || '').split(' ')[0])}</span>
+                                </div>
+                                <div class="bc-conta">
+                                    <span><i class="fa-solid fa-code-branch text-muted me-1"></i>Ag. ${escHTML(ag || '—')}</span>
+                                    <span><i class="fa-solid fa-hashtag text-muted me-1"></i>Cc. ${escHTML(cc || '—')}</span>
+                                </div>
+                                <div>
+                                    <div class="bc-saldo-lbl">Saldo atual (ERP)</div>
+                                    <div class="bc-saldo-val ${neg}">${fmtBRL(sal)}</div>
+                                </div>
+                                <div class="bc-actions">
+                                    <button type="button" class="btn btn-success" onclick="abrirTransferencia(${Number(b.BAN_ID)})">
+                                        <i class="fa-solid fa-arrow-right-arrow-left me-1"></i>Transferir
+                                    </button>
+                                    <button type="button" class="btn btn-outline-primary" onclick="editarBancoCard(${Number(b.BAN_ID)})" title="Editar cadastro">
+                                        <i class="fa-solid fa-pencil"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>`;
+                }).join('');
+            } catch (err) {
+                grid.innerHTML = `<div class="col-12 text-danger small">Erro ao carregar: ${escHTML(err.message || err)}</div>`;
+            }
+        }
+
+        window.editarBancoCard = function(id) {
+            // Reaproveita fluxo existente de edição (mesma rotina do botão "Editar" da tabela)
+            if (typeof editar === 'function') return editar(id);
+            // Fallback: dispara modal já com id carregado via API
+            api({ acao: 'get', id }).then(j => {
+                if (typeof preencherForm === 'function' && j.row) preencherForm(j.row);
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('modalBanco')).show();
+            });
+        };
+
+        window.abrirTransferencia = function(bancoOrigemId) {
+            const origem = BANCOS_CACHE.find(b => Number(b.BAN_ID) === Number(bancoOrigemId));
+            if (!origem) { Swal.fire({icon:'error', title:'Banco não encontrado'}); return; }
+
+            document.getElementById('trbOrigemId').value = String(origem.BAN_ID);
+            document.getElementById('trbOrigemLabel').innerHTML =
+                `<strong>${escHTML(origem.BAN_APELIDO)}</strong>` +
+                `<span class="text-muted small ms-2">${escHTML(origem.BAN_CODIGO || '')} ${escHTML(origem.BAN_NOME || '')}</span>`;
+            document.getElementById('trbSaldoOrigem').textContent = fmtBRL(origem.SALDO_ATUAL || 0);
+
+            // Destinos = todos os outros bancos ativos
+            const selDest = document.getElementById('trbDestino');
+            selDest.innerHTML = '<option value="">— Selecione —</option>' +
+                BANCOS_CACHE
+                    .filter(b => Number(b.BAN_ID) !== Number(origem.BAN_ID))
+                    .map(b => `<option value="${b.BAN_ID}">${escHTML(b.BAN_APELIDO)} — ${escHTML(b.BAN_NOME || '')}</option>`)
+                    .join('');
+
+            document.getElementById('trbValor').value = '';
+            document.getElementById('trbDescricao').value = '';
+            document.getElementById('trbData').value = new Date().toISOString().slice(0, 10);
+            document.getElementById('trbValorAlerta').textContent = '';
+
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('modalTransferencia')).show();
+        };
+
+        // Máscara simples de moeda BR
+        document.getElementById('trbValor')?.addEventListener('input', function() {
+            let v = this.value.replace(/\D/g, '');
+            if (!v) { this.value = ''; return; }
+            v = (parseInt(v, 10) / 100).toFixed(2);
+            this.value = v.replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+            // Alerta se saldo for negativo
+            const valorNum = parseFloat(v);
+            const saldo = Number(BANCOS_CACHE.find(b => Number(b.BAN_ID) === Number(document.getElementById('trbOrigemId').value))?.SALDO_ATUAL || 0);
+            const alerta = document.getElementById('trbValorAlerta');
+            if (valorNum > saldo) {
+                alerta.innerHTML = `<span class="text-danger"><i class="fa-solid fa-triangle-exclamation me-1"></i>Saldo ficará negativo: ${fmtBRL(saldo - valorNum)}</span>`;
+            } else {
+                alerta.textContent = '';
+            }
+        });
+
+        document.getElementById('btnConfirmarTransferencia')?.addEventListener('click', async () => {
+            const origemId  = parseInt(document.getElementById('trbOrigemId').value || '0', 10);
+            const destinoId = parseInt(document.getElementById('trbDestino').value || '0', 10);
+            const valorStr  = document.getElementById('trbValor').value.trim();
+            const valor     = parseFloat(valorStr.replace(/\./g, '').replace(',', '.')) || 0;
+            const data      = document.getElementById('trbData').value;
+            const descricao = document.getElementById('trbDescricao').value.trim();
+
+            if (!destinoId)        { Swal.fire({icon:'warning', title:'Selecione o banco de destino'}); return; }
+            if (origemId===destinoId){ Swal.fire({icon:'warning', title:'Origem e destino devem ser diferentes'}); return; }
+            if (valor <= 0)        { Swal.fire({icon:'warning', title:'Informe um valor positivo'}); return; }
+            if (!data)             { Swal.fire({icon:'warning', title:'Informe a data'}); return; }
+
+            const origem  = BANCOS_CACHE.find(b => Number(b.BAN_ID) === origemId);
+            const destino = BANCOS_CACHE.find(b => Number(b.BAN_ID) === destinoId);
+
+            const conf = await Swal.fire({
+                title: 'Confirmar transferência?',
+                html: `<div class="text-start small">
+                    <div><strong>${escHTML(origem?.BAN_APELIDO || '')}</strong> ➜ <strong>${escHTML(destino?.BAN_APELIDO || '')}</strong></div>
+                    <div class="mt-1">Valor: <strong>${fmtBRL(valor)}</strong></div>
+                    <div>Data: <strong>${fmtDataBR(data)}</strong></div>
+                    ${descricao ? '<div class="mt-1">Descrição: ' + escHTML(descricao) + '</div>' : ''}
+                </div>`,
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonText: 'Confirmar',
+                cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#16a34a',
+            });
+            if (!conf.isConfirmed) return;
+
+            const btn = document.getElementById('btnConfirmarTransferencia');
+            btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Processando…';
+
+            try {
+                const fd = new FormData();
+                fd.append('acao', 'salvar');
+                fd.append('banco_origem_id',  String(origemId));
+                fd.append('banco_destino_id', String(destinoId));
+                fd.append('valor',            valor.toFixed(2));
+                fd.append('data',             data);
+                fd.append('descricao',        descricao);
+
+                const r = await fetch(ENDPOINT_TRB, { method:'POST', body: fd, credentials: 'same-origin' });
+                const j = await r.json();
+                if (!j.ok) throw new Error(j.msg || 'Erro ao gravar transferência');
+
+                bootstrap.Modal.getInstance(document.getElementById('modalTransferencia'))?.hide();
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Transferência registrada',
+                    text: 'Os saldos foram atualizados.',
+                    timer: 1800,
+                    showConfirmButton: false
+                });
+                await carregarCardsBancos();
+                if (typeof listar === 'function') listar();
+            } catch (err) {
+                Swal.fire({ icon: 'error', title: 'Falha', text: err.message || String(err) });
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-solid fa-check me-1"></i>Confirmar transferência';
+            }
+        });
+
+        document.getElementById('btnAtualizarSaldos')?.addEventListener('click', () => carregarCardsBancos());
+
         // init
         carregarUFs();
         // deixa o select de cidade “em espera” até selecionar UF
         const cidSelInit = document.getElementById('BAN_CEDENTE_CIDADE');
         if (cidSelInit) cidSelInit.innerHTML = '<option value="">Selecione o estado</option>';
 
+        carregarCardsBancos();
         listar().catch(err => Swal.fire({
             icon: 'error',
             title: 'Erro',

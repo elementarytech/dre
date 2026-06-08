@@ -5,6 +5,7 @@ mb_internal_encoding('UTF-8');
 
 require_once __DIR__ . '/../config/auth.php';
 require_once __DIR__ . '/../config/conexao.php'; // <- seu padrão
+require_once __DIR__ . '/../config/saldos.php';
 
 // Resposta JSON limpa
 if (function_exists('ob_get_level')) {
@@ -74,6 +75,49 @@ function get(string $k, $default = '')
 try {
     $db = get_db(); // <- agora funciona com o seu config/conexao.php
     $acao = (string)(get('acao', post('acao', '')));
+
+    if ($acao === 'listar_com_saldo') {
+        // Versão "card view" da bancos.php: bancos ativos com saldo ERP atual.
+        // Reaproveita saldoErpConta() (mesma fonte usada no BI/Fluxo de Caixa).
+        $buscar = trim((string)get('buscar', ''));
+        $where  = ["BAN_STATUS = 'ATIVO'"];
+        $params = [];
+        if ($buscar !== '') {
+            $where[] = "(BAN_APELIDO LIKE :q OR BAN_NOME LIKE :q OR BAN_CODIGO LIKE :q OR BAN_AGENCIA LIKE :q OR BAN_CONTA LIKE :q)";
+            $params[':q'] = '%' . $buscar . '%';
+        }
+        $sql = "SELECT BAN_ID, BAN_APELIDO, BAN_CODIGO, BAN_NOME,
+                       BAN_AGENCIA, BAN_AGENCIA_DV, BAN_CONTA, BAN_CONTA_DV,
+                       BAN_CEDENTE_NOME, BAN_AMBIENTE, BAN_STATUS
+                FROM tb_banco
+                WHERE " . implode(' AND ', $where) . "
+                ORDER BY BAN_APELIDO ASC, BAN_ID DESC";
+        $st = $db->prepare($sql);
+        $st->execute($params);
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $hoje = date('Y-m-d');
+        $totalSaldo = 0.0;
+        foreach ($rows as &$r) {
+            $contaRef  = trim((string)$r['BAN_AGENCIA']) . '/' . trim((string)$r['BAN_CONTA']);
+            $saldo     = function_exists('saldoErpConta')
+                       ? (float)saldoErpConta($db, (int)$r['BAN_ID'], $contaRef)
+                       : 0.0;
+            $r['SALDO_ATUAL'] = $saldo;
+            $r['CONTA_REF']   = $contaRef;
+            $r['CONSULTA_EM'] = $hoje;
+            $totalSaldo      += $saldo;
+        }
+        unset($r);
+
+        json_out([
+            'ok' => true,
+            'rows' => $rows,
+            'total' => count($rows),
+            'total_saldo' => round($totalSaldo, 2),
+            'consulta_em' => $hoje,
+        ]);
+    }
 
     if ($acao === 'listar') {
         $buscar = trim((string)get('buscar', ''));
