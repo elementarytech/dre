@@ -25,6 +25,64 @@ if (!is_admin()) {
     exit('Acesso restrito. Faça login com um usuário ADMIN.');
 }
 
+// ============================================================
+// FILTRO DE PERÍODO (via GET)
+// Modos: tudo | 7d | 15d | 30d | mes | trim | ano | custom
+// Datas que entram no filtro:
+//   - Pagar PAGAS         → CPG_DATA_PAGAMENTO
+//   - Pagar EM ABERTO     → CPG_VENCIMENTO
+//   - Receber RECEBIDAS   → CRE_RECEBIDO_EM
+//   - Receber EM ABERTO   → CRE_VENCIMENTO
+//   - Movimento OFX       → COM_DATA_MOVIMENTO
+// ============================================================
+$periodo = strtolower(trim((string)($_GET['periodo'] ?? 'tudo')));
+$dtIniReq = trim((string)($_GET['data_ini'] ?? ''));
+$dtFimReq = trim((string)($_GET['data_fim'] ?? ''));
+$validData = static fn(string $s) => (bool)preg_match('/^\d{4}-\d{2}-\d{2}$/', $s);
+
+$hoje = new DateTime('today');
+$dtIni = null; $dtFim = null; $periodoLabel = 'Sem filtro de período (todos os registros)';
+
+if ($periodo === 'custom' && $validData($dtIniReq) && $validData($dtFimReq)) {
+    $dtIni = new DateTime($dtIniReq);
+    $dtFim = new DateTime($dtFimReq);
+    $periodoLabel = 'Personalizado: ' . $dtIni->format('d/m/Y') . ' a ' . $dtFim->format('d/m/Y');
+} elseif ($periodo === '7d') {
+    $dtIni = (clone $hoje)->modify('-6 days'); $dtFim = clone $hoje;
+    $periodoLabel = 'Últimos 7 dias';
+} elseif ($periodo === '15d') {
+    $dtIni = (clone $hoje)->modify('-14 days'); $dtFim = clone $hoje;
+    $periodoLabel = 'Últimos 15 dias';
+} elseif ($periodo === '30d') {
+    $dtIni = (clone $hoje)->modify('-29 days'); $dtFim = clone $hoje;
+    $periodoLabel = 'Últimos 30 dias';
+} elseif ($periodo === 'mes') {
+    $dtIni = new DateTime($hoje->format('Y-m-01'));
+    $dtFim = (clone $dtIni)->modify('last day of this month');
+    $periodoLabel = 'Mês atual (' . $dtIni->format('m/Y') . ')';
+} elseif ($periodo === 'trim') {
+    $mes = (int)$hoje->format('n');
+    $inicioTrimMes = ((int)floor(($mes - 1) / 3) * 3) + 1;
+    $dtIni = new DateTime($hoje->format('Y') . '-' . str_pad((string)$inicioTrimMes, 2, '0', STR_PAD_LEFT) . '-01');
+    $dtFim = (clone $dtIni)->modify('+2 months')->modify('last day of this month');
+    $periodoLabel = 'Trimestre atual';
+} elseif ($periodo === 'ano') {
+    $dtIni = new DateTime($hoje->format('Y') . '-01-01');
+    $dtFim = new DateTime($hoje->format('Y') . '-12-31');
+    $periodoLabel = 'Ano atual (' . $hoje->format('Y') . ')';
+}
+
+$temFiltro = ($dtIni !== null && $dtFim !== null);
+$dtIniSql  = $temFiltro ? $dtIni->format('Y-m-d') : null;
+$dtFimSql  = $temFiltro ? $dtFim->format('Y-m-d') : null;
+
+// Helper que devolve a cláusula AND col BETWEEN '...' AND '...' ou string vazia.
+$cl = static function (string $col) use ($temFiltro, $dtIniSql, $dtFimSql): string {
+    if (!$temFiltro) return '';
+    // Datas vêm de regex validada — concatenação segura.
+    return " AND {$col} BETWEEN '{$dtIniSql}' AND '{$dtFimSql}' ";
+};
+
 $brl = function ($v) { return 'R$ ' . number_format((float)$v, 2, ',', '.'); };
 $num = function ($v) { return number_format((int)$v, 0, ',', '.'); };
 $h   = function ($v) { return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8'); };
@@ -32,20 +90,28 @@ $h   = function ($v) { return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 // ============================================================
 // 1) RESUMO GERAL — CONTAS A PAGAR
 // ============================================================
+// Filtro de data: usa CPG_DATA_PAGAMENTO para PAGAS e CPG_VENCIMENTO para ABERTAS/ATRASADAS.
 $resumoP = $pdo->query("
     SELECT
         COUNT(*) AS total,
-        SUM(CASE WHEN CPG_STATUS = 'PAGO' AND CPG_BANCO_PAGAMENTO_FK IS NOT NULL THEN 1 ELSE 0 END) AS pagas_com_banco,
-        SUM(CASE WHEN CPG_STATUS = 'PAGO' AND CPG_BANCO_PAGAMENTO_FK IS NULL     THEN 1 ELSE 0 END) AS pagas_sem_banco,
-        SUM(CASE WHEN CPG_STATUS = 'PAGO' THEN 1 ELSE 0 END) AS pagas_total,
-        SUM(CASE WHEN CPG_STATUS = 'PAGO' AND CPG_BANCO_PAGAMENTO_FK IS NOT NULL
-                 THEN COALESCE(CPG_VALOR_PAGO, CPG_VALOR_PARCELA) ELSE 0 END) AS soma_pagas_com_banco,
-        SUM(CASE WHEN CPG_STATUS = 'PAGO' AND CPG_BANCO_PAGAMENTO_FK IS NULL
-                 THEN COALESCE(CPG_VALOR_PAGO, CPG_VALOR_PARCELA) ELSE 0 END) AS soma_pagas_sem_banco,
-        SUM(CASE WHEN CPG_STATUS IN ('ABERTO','ATRASADO') THEN 1 ELSE 0 END) AS abertas,
-        SUM(CASE WHEN CPG_STATUS IN ('ABERTO','ATRASADO') THEN CPG_VALOR_PARCELA ELSE 0 END) AS soma_abertas,
-        SUM(CASE WHEN CPG_STATUS IN ('ABERTO','ATRASADO') AND CPG_BANCO_PAGAMENTO_FK IS NULL THEN 1 ELSE 0 END) AS abertas_sem_banco,
-        SUM(CASE WHEN CPG_STATUS IN ('ABERTO','ATRASADO') AND CPG_BANCO_PAGAMENTO_FK IS NULL THEN CPG_VALOR_PARCELA ELSE 0 END) AS soma_abertas_sem_banco,
+        SUM(CASE WHEN CPG_STATUS = 'PAGO' AND CPG_BANCO_PAGAMENTO_FK IS NOT NULL "
+            . $cl('CPG_DATA_PAGAMENTO') . " THEN 1 ELSE 0 END) AS pagas_com_banco,
+        SUM(CASE WHEN CPG_STATUS = 'PAGO' AND CPG_BANCO_PAGAMENTO_FK IS NULL "
+            . $cl('CPG_DATA_PAGAMENTO') . " THEN 1 ELSE 0 END) AS pagas_sem_banco,
+        SUM(CASE WHEN CPG_STATUS = 'PAGO' "
+            . $cl('CPG_DATA_PAGAMENTO') . " THEN 1 ELSE 0 END) AS pagas_total,
+        SUM(CASE WHEN CPG_STATUS = 'PAGO' AND CPG_BANCO_PAGAMENTO_FK IS NOT NULL "
+            . $cl('CPG_DATA_PAGAMENTO') . " THEN COALESCE(CPG_VALOR_PAGO, CPG_VALOR_PARCELA) ELSE 0 END) AS soma_pagas_com_banco,
+        SUM(CASE WHEN CPG_STATUS = 'PAGO' AND CPG_BANCO_PAGAMENTO_FK IS NULL "
+            . $cl('CPG_DATA_PAGAMENTO') . " THEN COALESCE(CPG_VALOR_PAGO, CPG_VALOR_PARCELA) ELSE 0 END) AS soma_pagas_sem_banco,
+        SUM(CASE WHEN CPG_STATUS IN ('ABERTO','ATRASADO') "
+            . $cl('CPG_VENCIMENTO') . " THEN 1 ELSE 0 END) AS abertas,
+        SUM(CASE WHEN CPG_STATUS IN ('ABERTO','ATRASADO') "
+            . $cl('CPG_VENCIMENTO') . " THEN CPG_VALOR_PARCELA ELSE 0 END) AS soma_abertas,
+        SUM(CASE WHEN CPG_STATUS IN ('ABERTO','ATRASADO') AND CPG_BANCO_PAGAMENTO_FK IS NULL "
+            . $cl('CPG_VENCIMENTO') . " THEN 1 ELSE 0 END) AS abertas_sem_banco,
+        SUM(CASE WHEN CPG_STATUS IN ('ABERTO','ATRASADO') AND CPG_BANCO_PAGAMENTO_FK IS NULL "
+            . $cl('CPG_VENCIMENTO') . " THEN CPG_VALOR_PARCELA ELSE 0 END) AS soma_abertas_sem_banco,
         SUM(CASE WHEN CPG_STATUS = 'CANCELADO' THEN 1 ELSE 0 END) AS canceladas
     FROM tb_contas_pagar
 ")->fetch(PDO::FETCH_ASSOC) ?: [];
@@ -56,17 +122,24 @@ $resumoP = $pdo->query("
 $resumoR = $pdo->query("
     SELECT
         COUNT(*) AS total,
-        SUM(CASE WHEN CRE_STATUS IN ('RECEBIDO','PAGO') AND CRE_BANCO_FK IS NOT NULL THEN 1 ELSE 0 END) AS receb_com_banco,
-        SUM(CASE WHEN CRE_STATUS IN ('RECEBIDO','PAGO') AND CRE_BANCO_FK IS NULL     THEN 1 ELSE 0 END) AS receb_sem_banco,
-        SUM(CASE WHEN CRE_STATUS IN ('RECEBIDO','PAGO') THEN 1 ELSE 0 END) AS receb_total,
-        SUM(CASE WHEN CRE_STATUS IN ('RECEBIDO','PAGO') AND CRE_BANCO_FK IS NOT NULL
-                 THEN COALESCE(NULLIF(CRE_VALOR_RECEBIDO,0), CRE_VALOR) ELSE 0 END) AS soma_receb_com_banco,
-        SUM(CASE WHEN CRE_STATUS IN ('RECEBIDO','PAGO') AND CRE_BANCO_FK IS NULL
-                 THEN COALESCE(NULLIF(CRE_VALOR_RECEBIDO,0), CRE_VALOR) ELSE 0 END) AS soma_receb_sem_banco,
-        SUM(CASE WHEN CRE_STATUS IN ('ABERTO','PROGRAMADO','PENDENTE') THEN 1 ELSE 0 END) AS abertas,
-        SUM(CASE WHEN CRE_STATUS IN ('ABERTO','PROGRAMADO','PENDENTE') THEN CRE_VALOR ELSE 0 END) AS soma_abertas,
-        SUM(CASE WHEN CRE_STATUS IN ('ABERTO','PROGRAMADO','PENDENTE') AND CRE_BANCO_FK IS NULL THEN 1 ELSE 0 END) AS abertas_sem_banco,
-        SUM(CASE WHEN CRE_STATUS IN ('ABERTO','PROGRAMADO','PENDENTE') AND CRE_BANCO_FK IS NULL THEN CRE_VALOR ELSE 0 END) AS soma_abertas_sem_banco,
+        SUM(CASE WHEN CRE_STATUS IN ('RECEBIDO','PAGO') AND CRE_BANCO_FK IS NOT NULL "
+            . $cl('CRE_RECEBIDO_EM') . " THEN 1 ELSE 0 END) AS receb_com_banco,
+        SUM(CASE WHEN CRE_STATUS IN ('RECEBIDO','PAGO') AND CRE_BANCO_FK IS NULL "
+            . $cl('CRE_RECEBIDO_EM') . " THEN 1 ELSE 0 END) AS receb_sem_banco,
+        SUM(CASE WHEN CRE_STATUS IN ('RECEBIDO','PAGO') "
+            . $cl('CRE_RECEBIDO_EM') . " THEN 1 ELSE 0 END) AS receb_total,
+        SUM(CASE WHEN CRE_STATUS IN ('RECEBIDO','PAGO') AND CRE_BANCO_FK IS NOT NULL "
+            . $cl('CRE_RECEBIDO_EM') . " THEN COALESCE(NULLIF(CRE_VALOR_RECEBIDO,0), CRE_VALOR) ELSE 0 END) AS soma_receb_com_banco,
+        SUM(CASE WHEN CRE_STATUS IN ('RECEBIDO','PAGO') AND CRE_BANCO_FK IS NULL "
+            . $cl('CRE_RECEBIDO_EM') . " THEN COALESCE(NULLIF(CRE_VALOR_RECEBIDO,0), CRE_VALOR) ELSE 0 END) AS soma_receb_sem_banco,
+        SUM(CASE WHEN CRE_STATUS IN ('ABERTO','PROGRAMADO','PENDENTE') "
+            . $cl('CRE_VENCIMENTO') . " THEN 1 ELSE 0 END) AS abertas,
+        SUM(CASE WHEN CRE_STATUS IN ('ABERTO','PROGRAMADO','PENDENTE') "
+            . $cl('CRE_VENCIMENTO') . " THEN CRE_VALOR ELSE 0 END) AS soma_abertas,
+        SUM(CASE WHEN CRE_STATUS IN ('ABERTO','PROGRAMADO','PENDENTE') AND CRE_BANCO_FK IS NULL "
+            . $cl('CRE_VENCIMENTO') . " THEN 1 ELSE 0 END) AS abertas_sem_banco,
+        SUM(CASE WHEN CRE_STATUS IN ('ABERTO','PROGRAMADO','PENDENTE') AND CRE_BANCO_FK IS NULL "
+            . $cl('CRE_VENCIMENTO') . " THEN CRE_VALOR ELSE 0 END) AS soma_abertas_sem_banco,
         SUM(CASE WHEN CRE_STATUS = 'CANCELADO' THEN 1 ELSE 0 END) AS canceladas
     FROM tb_contas_receber
 ")->fetch(PDO::FETCH_ASSOC) ?: [];
@@ -89,22 +162,26 @@ $bancos = $pdo->query("
 $stPagasBanco = $pdo->prepare("
     SELECT COUNT(*) AS qtd, COALESCE(SUM(COALESCE(CPG_VALOR_PAGO, CPG_VALOR_PARCELA)),0) AS soma
     FROM tb_contas_pagar
-    WHERE CPG_STATUS = 'PAGO' AND CPG_BANCO_PAGAMENTO_FK = ?
+    WHERE CPG_STATUS = 'PAGO' AND CPG_BANCO_PAGAMENTO_FK = ? "
+    . $cl('CPG_DATA_PAGAMENTO') . "
 ");
 $stRecebBanco = $pdo->prepare("
     SELECT COUNT(*) AS qtd, COALESCE(SUM(COALESCE(NULLIF(CRE_VALOR_RECEBIDO,0), CRE_VALOR)),0) AS soma
     FROM tb_contas_receber
-    WHERE CRE_STATUS IN ('RECEBIDO','PAGO') AND CRE_BANCO_FK = ?
+    WHERE CRE_STATUS IN ('RECEBIDO','PAGO') AND CRE_BANCO_FK = ? "
+    . $cl('CRE_RECEBIDO_EM') . "
 ");
 $stAbertasPagarBanco = $pdo->prepare("
     SELECT COUNT(*) AS qtd, COALESCE(SUM(CPG_VALOR_PARCELA),0) AS soma
     FROM tb_contas_pagar
-    WHERE CPG_STATUS IN ('ABERTO','ATRASADO') AND CPG_BANCO_PAGAMENTO_FK = ?
+    WHERE CPG_STATUS IN ('ABERTO','ATRASADO') AND CPG_BANCO_PAGAMENTO_FK = ? "
+    . $cl('CPG_VENCIMENTO') . "
 ");
 $stAbertasRecebBanco = $pdo->prepare("
     SELECT COUNT(*) AS qtd, COALESCE(SUM(CRE_VALOR),0) AS soma
     FROM tb_contas_receber
-    WHERE CRE_STATUS IN ('ABERTO','PROGRAMADO','PENDENTE') AND CRE_BANCO_FK = ?
+    WHERE CRE_STATUS IN ('ABERTO','PROGRAMADO','PENDENTE') AND CRE_BANCO_FK = ? "
+    . $cl('CRE_VENCIMENTO') . "
 ");
 // Saldo legado (apenas referência histórica; tabela deprecada após briefing 1)
 $stFcb = $pdo->prepare("
@@ -131,12 +208,14 @@ $stSet = $pdo->prepare("
 $stOfxDeb = $pdo->prepare("
     SELECT COUNT(*) AS qtd, COALESCE(SUM(ABS(COM_VALOR)),0) AS soma
     FROM tb_conciliacao_ofx_movimento
-    WHERE COM_BANCO_FK = ? AND COM_TIPO = 'DEBITO'
+    WHERE COM_BANCO_FK = ? AND COM_TIPO = 'DEBITO' "
+    . $cl('COM_DATA_MOVIMENTO') . "
 ");
 $stOfxCre = $pdo->prepare("
     SELECT COUNT(*) AS qtd, COALESCE(SUM(ABS(COM_VALOR)),0) AS soma
     FROM tb_conciliacao_ofx_movimento
-    WHERE COM_BANCO_FK = ? AND COM_TIPO = 'CREDITO'
+    WHERE COM_BANCO_FK = ? AND COM_TIPO = 'CREDITO' "
+    . $cl('COM_DATA_MOVIMENTO') . "
 ");
 
 $linhasBanco = [];
@@ -213,7 +292,8 @@ $lstPagasOrf = $pdo->query("
            f.FOR_RAZAO_SOCIAL, f.FOR_NOME_FANTASIA
     FROM tb_contas_pagar cp
     LEFT JOIN tb_fornecedor f ON f.FOR_CODIGO_PK = cp.CPG_FORNECEDOR_FK
-    WHERE cp.CPG_STATUS = 'PAGO' AND cp.CPG_BANCO_PAGAMENTO_FK IS NULL
+    WHERE cp.CPG_STATUS = 'PAGO' AND cp.CPG_BANCO_PAGAMENTO_FK IS NULL "
+    . $cl('cp.CPG_DATA_PAGAMENTO') . "
     ORDER BY cp.CPG_DATA_PAGAMENTO DESC, cp.CPG_CODIGO_PK DESC
     LIMIT 500
 ")->fetchAll(PDO::FETCH_ASSOC);
@@ -225,7 +305,8 @@ $lstAbertasPagarOrf = $pdo->query("
            f.FOR_RAZAO_SOCIAL, f.FOR_NOME_FANTASIA
     FROM tb_contas_pagar cp
     LEFT JOIN tb_fornecedor f ON f.FOR_CODIGO_PK = cp.CPG_FORNECEDOR_FK
-    WHERE cp.CPG_STATUS IN ('ABERTO','ATRASADO') AND cp.CPG_BANCO_PAGAMENTO_FK IS NULL
+    WHERE cp.CPG_STATUS IN ('ABERTO','ATRASADO') AND cp.CPG_BANCO_PAGAMENTO_FK IS NULL "
+    . $cl('cp.CPG_VENCIMENTO') . "
     ORDER BY cp.CPG_VENCIMENTO ASC, cp.CPG_CODIGO_PK ASC
     LIMIT 500
 ")->fetchAll(PDO::FETCH_ASSOC);
@@ -268,7 +349,8 @@ $lstRecebOrf = $pdo->query("
            cr.CRE_CLIENTE_NOME, {$selCli}
     FROM tb_contas_receber cr
     {$joinCli}
-    WHERE cr.CRE_STATUS IN ('RECEBIDO','PAGO') AND cr.CRE_BANCO_FK IS NULL
+    WHERE cr.CRE_STATUS IN ('RECEBIDO','PAGO') AND cr.CRE_BANCO_FK IS NULL "
+    . $cl('cr.CRE_RECEBIDO_EM') . "
     ORDER BY cr.CRE_RECEBIDO_EM DESC, cr.CRE_ID DESC
     LIMIT 500
 ")->fetchAll(PDO::FETCH_ASSOC);
@@ -280,7 +362,8 @@ $lstAbertasRecebOrf = $pdo->query("
            cr.CRE_CLIENTE_NOME, {$selCli}
     FROM tb_contas_receber cr
     {$joinCli}
-    WHERE cr.CRE_STATUS IN ('ABERTO','PROGRAMADO','PENDENTE') AND cr.CRE_BANCO_FK IS NULL
+    WHERE cr.CRE_STATUS IN ('ABERTO','PROGRAMADO','PENDENTE') AND cr.CRE_BANCO_FK IS NULL "
+    . $cl('cr.CRE_VENCIMENTO') . "
     ORDER BY cr.CRE_VENCIMENTO ASC, cr.CRE_ID ASC
     LIMIT 500
 ")->fetchAll(PDO::FETCH_ASSOC);
@@ -295,6 +378,8 @@ $totalOfx = $pdo->query("
         SUM(CASE WHEN COM_TIPO='DEBITO'  THEN 1 ELSE 0 END) AS qtd_deb,
         SUM(CASE WHEN COM_TIPO='CREDITO' THEN 1 ELSE 0 END) AS qtd_cre
     FROM tb_conciliacao_ofx_movimento
+    WHERE 1=1 "
+    . $cl('COM_DATA_MOVIMENTO') . "
 ")->fetch(PDO::FETCH_ASSOC) ?: ['soma_deb'=>0,'soma_cre'=>0,'qtd_deb'=>0,'qtd_cre'=>0];
 
 ?><!doctype html>
@@ -335,13 +420,63 @@ $totalOfx = $pdo->query("
     <div class="d-flex align-items-center justify-content-between mb-3">
         <div>
             <h4 class="fw-bold mb-1"><i class="bi bi-clipboard-data me-2"></i>Diagnóstico — Pagar / Receber × Bancos</h4>
-            <div class="small-muted">Análise pontual gerada em <?=date('d/m/Y H:i')?>.</div>
+            <div class="small-muted">
+                Análise gerada em <?=date('d/m/Y H:i')?> — <strong><?=$h($periodoLabel)?></strong>.
+            </div>
         </div>
         <div class="d-flex gap-2">
             <a href="index.php" class="btn btn-sm btn-outline-primary" title="Voltar ao Dashboard"><i class="bi bi-house-door-fill me-1"></i>Dashboard</a>
             <a href="contas_pagar.php"   class="btn btn-sm btn-outline-danger"><i class="bi bi-arrow-up-right me-1"></i>Contas a Pagar</a>
             <a href="contas_receber.php" class="btn btn-sm btn-outline-success"><i class="bi bi-arrow-down-right me-1"></i>Contas a Receber</a>
             <a href="fluxo_caixa.php"    class="btn btn-sm btn-outline-secondary"><i class="bi bi-graph-up me-1"></i>Fluxo de Caixa</a>
+        </div>
+    </div>
+
+    <!-- Filtro de período -->
+    <div class="card mb-3" style="border-radius:12px;border:1px solid #e5e7eb">
+        <div class="card-body py-3">
+            <form method="get" class="row g-2 align-items-end">
+                <div class="col-12 col-md-auto">
+                    <label class="form-label small fw-bold mb-1 d-block"><i class="bi bi-calendar-range me-1"></i>Período</label>
+                    <div class="btn-group" role="group" aria-label="Períodos rápidos">
+                        <?php
+                        $quickBtns = [
+                            'tudo' => 'Tudo',
+                            '7d'   => '7 dias',
+                            '15d'  => '15 dias',
+                            '30d'  => '30 dias',
+                            'mes'  => 'Este mês',
+                            'trim' => 'Trimestre',
+                            'ano'  => 'Este ano',
+                        ];
+                        foreach ($quickBtns as $k => $rotulo):
+                            $ativo = ($periodo === $k);
+                        ?>
+                            <a href="?periodo=<?=$h($k)?>" class="btn btn-sm <?= $ativo ? 'btn-primary' : 'btn-outline-secondary' ?>"><?=$rotulo?></a>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label small fw-bold mb-1">Data inicial</label>
+                    <input type="date" name="data_ini" class="form-control form-control-sm" value="<?=$h($dtIniReq)?>">
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label small fw-bold mb-1">Data final</label>
+                    <input type="date" name="data_fim" class="form-control form-control-sm" value="<?=$h($dtFimReq)?>">
+                </div>
+                <div class="col-12 col-md-auto">
+                    <input type="hidden" name="periodo" value="custom">
+                    <button type="submit" class="btn btn-sm btn-success"><i class="bi bi-funnel me-1"></i>Aplicar período</button>
+                    <a href="?periodo=tudo" class="btn btn-sm btn-outline-secondary" title="Remover filtro"><i class="bi bi-x-circle me-1"></i>Limpar</a>
+                </div>
+            </form>
+            <?php if ($temFiltro): ?>
+                <div class="small-muted mt-2">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Filtrando: <strong>PAGAS</strong> por data de pagamento, <strong>RECEBIDAS</strong> por data de recebimento,
+                    <strong>EM ABERTO</strong> por vencimento, <strong>OFX</strong> por data do movimento.
+                </div>
+            <?php endif; ?>
         </div>
     </div>
 
