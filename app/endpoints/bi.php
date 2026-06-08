@@ -633,6 +633,312 @@ try {
     }
 
 
+    if ($acao === 'bancos_detalhado') {
+        // Aba BANCOS do BI — visão executiva: para cada banco ativo retorna
+        // saldo atual, entradas/saídas no período, qtd movimentos, % conciliado e
+        // série diária pro mini-gráfico. Plus: consolidado pro gráfico geral.
+        $phCre = sql_placeholders(CRE_STATUS_PAGO);
+        $phCpg = sql_placeholders(CPG_STATUS_PAGO);
+
+        // 1) Lista bancos ativos respeitando filtro de empresa
+        $sqlBcs = "SELECT b.BAN_ID, b.BAN_APELIDO, b.BAN_NOME, b.BAN_CODIGO,
+                          b.BAN_AGENCIA, b.BAN_AGENCIA_DV, b.BAN_CONTA, b.BAN_CONTA_DV,
+                          COALESCE(NULLIF(emp.EMP_NOME_FANTASIA,''), emp.EMP_RAZAO_SOCIAL) AS EMPRESA_NOME,
+                          emp.EMP_ID
+                   FROM tb_banco b
+                   LEFT JOIN tb_empresa emp ON emp.EMP_CNPJ = b.BAN_CEDENTE_DOC
+                   WHERE b.BAN_STATUS = 'ATIVO'";
+        $parBcs = [];
+        if ($empresaFiltro > 0) { $sqlBcs .= " AND emp.EMP_ID = ?"; $parBcs[] = $empresaFiltro; }
+        $sqlBcs .= " ORDER BY b.BAN_APELIDO ASC";
+        $stB = $pdo->prepare($sqlBcs);
+        $stB->execute($parBcs);
+        $bancos = $stB->fetchAll(PDO::FETCH_ASSOC);
+
+        $consolidadoEntradas = 0.0;
+        $consolidadoSaidas   = 0.0;
+        $consolidadoSaldo    = 0.0;
+        $totMovs = 0; $totConciliados = 0;
+        $alertas = [];
+
+        // Série consolidada (dia → entradas, saídas)
+        $serieDiaEntradas = [];
+        $serieDiaSaidas   = [];
+
+        foreach ($bancos as &$b) {
+            $bancoFk  = (int)$b['BAN_ID'];
+            $contaRef = trim((string)$b['BAN_AGENCIA']) . '/' . trim((string)$b['BAN_CONTA']);
+
+            $saldoAtual = (float)saldoErpConta($pdo, $bancoFk, $contaRef);
+            $consolidadoSaldo += $saldoAtual;
+
+            // Entradas no período (recebimentos com status RECEBIDO/PAGO)
+            $sqlEnt = "SELECT COALESCE(SUM(COALESCE(NULLIF(CRE_VALOR_RECEBIDO,0), CRE_VALOR)),0) AS total,
+                              COUNT(*) AS qtd
+                       FROM tb_contas_receber
+                       WHERE CRE_BANCO_FK = ?
+                         AND CRE_STATUS IN ({$phCre})
+                         AND CRE_RECEBIDO_EM BETWEEN ? AND ?";
+            $stE = $pdo->prepare($sqlEnt);
+            $stE->execute(array_merge([$bancoFk], CRE_STATUS_PAGO, [$dtIniSql, $dtFimSql]));
+            $entRow = $stE->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'qtd' => 0];
+            $b['ENTRADAS_VALOR'] = (float)$entRow['total'];
+            $b['ENTRADAS_QTD']   = (int)$entRow['qtd'];
+
+            // Saídas no período (pagamentos com status PAGO)
+            $sqlSai = "SELECT COALESCE(SUM(COALESCE(CPG_VALOR_PAGO, CPG_VALOR_PARCELA)),0) AS total,
+                              COUNT(*) AS qtd
+                       FROM tb_contas_pagar
+                       WHERE CPG_BANCO_PAGAMENTO_FK = ?
+                         AND CPG_STATUS IN ({$phCpg})
+                         AND CPG_DATA_PAGAMENTO BETWEEN ? AND ?";
+            $stS = $pdo->prepare($sqlSai);
+            $stS->execute(array_merge([$bancoFk], CPG_STATUS_PAGO, [$dtIniSql, $dtFimSql]));
+            $saiRow = $stS->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'qtd' => 0];
+            $b['SAIDAS_VALOR'] = (float)$saiRow['total'];
+            $b['SAIDAS_QTD']   = (int)$saiRow['qtd'];
+
+            // Movimentos OFX no período (qtd total e conciliados)
+            $sqlMov = "SELECT COUNT(*) AS total,
+                              SUM(CASE WHEN COM_CONCILIADO = 'SIM' THEN 1 ELSE 0 END) AS conciliados
+                       FROM tb_conciliacao_ofx_movimento
+                       WHERE COM_BANCO_FK = ?
+                         AND COM_DATA_MOVIMENTO BETWEEN ? AND ?";
+            $stM = $pdo->prepare($sqlMov);
+            $stM->execute([$bancoFk, $dtIniSql, $dtFimSql]);
+            $movRow = $stM->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'conciliados' => 0];
+            $b['OFX_TOTAL']       = (int)$movRow['total'];
+            $b['OFX_CONCILIADOS'] = (int)$movRow['conciliados'];
+            $b['OFX_PERC']        = $b['OFX_TOTAL'] > 0
+                ? round(($b['OFX_CONCILIADOS'] / $b['OFX_TOTAL']) * 100, 1)
+                : 100.0;
+            $totMovs += $b['OFX_TOTAL'];
+            $totConciliados += $b['OFX_CONCILIADOS'];
+
+            // Variação líquida no período
+            $b['VARIACAO_PERIODO'] = round($b['ENTRADAS_VALOR'] - $b['SAIDAS_VALOR'], 2);
+            $b['SALDO_ATUAL']      = round($saldoAtual, 2);
+            $b['SALDO_INICIAL']    = round($saldoAtual - $b['VARIACAO_PERIODO'], 2);
+
+            // Série diária pra mini-gráfico (saldo evolutivo no período)
+            $sqlDia = "SELECT DATE(CRE_RECEBIDO_EM) AS d, SUM(COALESCE(NULLIF(CRE_VALOR_RECEBIDO,0), CRE_VALOR)) AS v
+                       FROM tb_contas_receber
+                       WHERE CRE_BANCO_FK = ? AND CRE_STATUS IN ({$phCre})
+                         AND CRE_RECEBIDO_EM BETWEEN ? AND ?
+                       GROUP BY DATE(CRE_RECEBIDO_EM)";
+            $stD = $pdo->prepare($sqlDia);
+            $stD->execute(array_merge([$bancoFk], CRE_STATUS_PAGO, [$dtIniSql, $dtFimSql]));
+            $entradasDia = [];
+            foreach ($stD->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $entradasDia[$row['d']] = (float)$row['v'];
+                $serieDiaEntradas[$row['d']] = ($serieDiaEntradas[$row['d']] ?? 0) + (float)$row['v'];
+            }
+
+            $sqlDia2 = "SELECT DATE(CPG_DATA_PAGAMENTO) AS d, SUM(COALESCE(CPG_VALOR_PAGO, CPG_VALOR_PARCELA)) AS v
+                        FROM tb_contas_pagar
+                        WHERE CPG_BANCO_PAGAMENTO_FK = ? AND CPG_STATUS IN ({$phCpg})
+                          AND CPG_DATA_PAGAMENTO BETWEEN ? AND ?
+                        GROUP BY DATE(CPG_DATA_PAGAMENTO)";
+            $stD2 = $pdo->prepare($sqlDia2);
+            $stD2->execute(array_merge([$bancoFk], CPG_STATUS_PAGO, [$dtIniSql, $dtFimSql]));
+            $saidasDia = [];
+            foreach ($stD2->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $saidasDia[$row['d']] = (float)$row['v'];
+                $serieDiaSaidas[$row['d']] = ($serieDiaSaidas[$row['d']] ?? 0) + (float)$row['v'];
+            }
+
+            // Cria serie diária acumulada para mini-gráfico (do saldo inicial até atual)
+            // + séries diárias de entradas/saídas para uso quando o usuário filtrar por banco no front.
+            $cursor = clone $dtIni;
+            $fim    = clone $dtFim;
+            $saldoCorrente = $b['SALDO_INICIAL'];
+            $sparkSaldo = [];
+            $entDiaArr  = [];
+            $saiDiaArr  = [];
+            $diasMax = 0;
+            while ($cursor <= $fim && $diasMax < 400) {
+                $key = $cursor->format('Y-m-d');
+                $entHoje = round((float)($entradasDia[$key] ?? 0), 2);
+                $saiHoje = round((float)($saidasDia[$key] ?? 0), 2);
+                $entDiaArr[] = $entHoje;
+                $saiDiaArr[] = $saiHoje;
+                $saldoCorrente += $entHoje - $saiHoje;
+                $sparkSaldo[] = round($saldoCorrente, 2);
+                $cursor->modify('+1 day');
+                $diasMax++;
+            }
+            $b['SPARK_SALDO']   = $sparkSaldo;
+            $b['ENT_DIA']       = $entDiaArr;
+            $b['SAI_DIA']       = $saiDiaArr;
+
+            $consolidadoEntradas += $b['ENTRADAS_VALOR'];
+            $consolidadoSaidas   += $b['SAIDAS_VALOR'];
+
+            // Alertas por banco
+            if ($saldoAtual < 0) {
+                $alertas[] = ['nivel' => 'danger', 'banco' => $b['BAN_APELIDO'],
+                              'titulo' => 'Saldo negativo', 'descricao' => sprintf('%s está com saldo de %s.', $b['BAN_APELIDO'], number_format($saldoAtual, 2, ',', '.'))];
+            }
+            if ($b['ENTRADAS_QTD'] === 0 && $b['SAIDAS_QTD'] === 0 && $b['OFX_TOTAL'] === 0) {
+                $alertas[] = ['nivel' => 'info', 'banco' => $b['BAN_APELIDO'],
+                              'titulo' => 'Sem movimento no período', 'descricao' => $b['BAN_APELIDO'] . ' não teve movimentação no período selecionado.'];
+            }
+            if ($b['OFX_TOTAL'] > 0 && $b['OFX_PERC'] < 80) {
+                $alertas[] = ['nivel' => 'warning', 'banco' => $b['BAN_APELIDO'],
+                              'titulo' => 'Conciliação baixa', 'descricao' => sprintf('%s: %d de %d movimentos OFX conciliados (%.1f%%).', $b['BAN_APELIDO'], $b['OFX_CONCILIADOS'], $b['OFX_TOTAL'], $b['OFX_PERC'])];
+            }
+        }
+        unset($b);
+
+        // 2) Série consolidada pro gráfico principal (entradas, saídas, saldo acumulado)
+        $labels = [];
+        $entSerie = [];
+        $saiSerie = [];
+        $cursor = clone $dtIni;
+        $fim    = clone $dtFim;
+        $diasMax = 0;
+        while ($cursor <= $fim && $diasMax < 400) {
+            $key = $cursor->format('Y-m-d');
+            $labels[] = $cursor->format('d/m');
+            $entSerie[] = round((float)($serieDiaEntradas[$key] ?? 0), 2);
+            $saiSerie[] = round((float)($serieDiaSaidas[$key] ?? 0), 2);
+            $cursor->modify('+1 day');
+            $diasMax++;
+        }
+
+        // 3) Top movimentos no período (3 maiores entradas + 3 maiores saídas)
+        $sqlTopE = "SELECT cr.CRE_VALOR_RECEBIDO AS valor, cr.CRE_RECEBIDO_EM AS data,
+                           cr.CRE_CLIENTE_NOME AS contraparte, b.BAN_APELIDO AS banco,
+                           cr.CRE_BANCO_FK AS banco_id
+                    FROM tb_contas_receber cr
+                    LEFT JOIN tb_banco b ON b.BAN_ID = cr.CRE_BANCO_FK
+                    WHERE cr.CRE_STATUS IN ({$phCre})
+                      AND cr.CRE_RECEBIDO_EM BETWEEN ? AND ?";
+        $parTopE = array_merge(CRE_STATUS_PAGO, [$dtIniSql, $dtFimSql]);
+        if ($empresaFiltro > 0) {
+            $sqlTopE .= " AND cr.CRE_CONTRATO_FK IN (SELECT CTR_ID FROM contratos WHERE CTR_EMPRESA_ID = ?)";
+            $parTopE[] = $empresaFiltro;
+        }
+        $sqlTopE .= " ORDER BY cr.CRE_VALOR_RECEBIDO DESC LIMIT 5";
+        $stTE = $pdo->prepare($sqlTopE);
+        $stTE->execute($parTopE);
+        $topEntradas = $stTE->fetchAll(PDO::FETCH_ASSOC);
+
+        $sqlTopS = "SELECT cp.CPG_VALOR_PAGO AS valor, cp.CPG_DATA_PAGAMENTO AS data,
+                           COALESCE(NULLIF(f.FOR_NOME_FANTASIA,''), f.FOR_RAZAO_SOCIAL, NULLIF(fu.FUN_NOME,''), '—') AS contraparte,
+                           b.BAN_APELIDO AS banco,
+                           cp.CPG_BANCO_PAGAMENTO_FK AS banco_id
+                    FROM tb_contas_pagar cp
+                    LEFT JOIN tb_fornecedor f ON f.FOR_CODIGO_PK = cp.CPG_FORNECEDOR_FK
+                    LEFT JOIN tb_funcionarios fu ON fu.FUN_CODIGO_PK = cp.CPG_FUNCIONARIO_FK
+                    LEFT JOIN tb_banco b ON b.BAN_ID = cp.CPG_BANCO_PAGAMENTO_FK
+                    WHERE cp.CPG_STATUS IN ({$phCpg})
+                      AND cp.CPG_DATA_PAGAMENTO BETWEEN ? AND ?";
+        $parTopS = array_merge(CPG_STATUS_PAGO, [$dtIniSql, $dtFimSql]);
+        if ($empresaFiltro > 0) {
+            $sqlTopS .= " AND cp.CPG_EMPRESA_FK = ?";
+            $parTopS[] = $empresaFiltro;
+        }
+        $sqlTopS .= " ORDER BY cp.CPG_VALOR_PAGO DESC LIMIT 5";
+        $stTS = $pdo->prepare($sqlTopS);
+        $stTS->execute($parTopS);
+        $topSaidas = $stTS->fetchAll(PDO::FETCH_ASSOC);
+
+        $percConciliacao = $totMovs > 0 ? round(($totConciliados / $totMovs) * 100, 1) : 100.0;
+
+        json_out([
+            'ok' => true,
+            'empresa_label' => $empresaNome,
+            'periodo_label' => $periodoLabel . ' (' . $dtIni->format('d/m/Y') . ' a ' . $dtFim->format('d/m/Y') . ')',
+            'kpis' => [
+                'saldo_total'       => round($consolidadoSaldo, 2),
+                'entradas_total'    => round($consolidadoEntradas, 2),
+                'saidas_total'      => round($consolidadoSaidas, 2),
+                'resultado_periodo' => round($consolidadoEntradas - $consolidadoSaidas, 2),
+                'movs_total'        => $totMovs,
+                'movs_conciliados'  => $totConciliados,
+                'perc_conciliacao'  => $percConciliacao,
+                'qtd_bancos'        => count($bancos),
+            ],
+            'bancos' => $bancos,
+            'grafico' => [
+                'labels'   => $labels,
+                'entradas' => $entSerie,
+                'saidas'   => $saiSerie,
+            ],
+            'top_entradas' => $topEntradas,
+            'top_saidas'   => $topSaidas,
+            'alertas'      => $alertas,
+        ]);
+    }
+
+    if ($acao === 'movimentos_banco') {
+        // Lista detalhada de movimentos do banco no período (entradas + saídas + OFX).
+        $bancoFk = (int)($_GET['banco_id'] ?? 0);
+        if ($bancoFk <= 0) json_out(['ok' => false, 'msg' => 'Informe banco_id.'], 422);
+
+        $phCre = sql_placeholders(CRE_STATUS_PAGO);
+        $phCpg = sql_placeholders(CPG_STATUS_PAGO);
+
+        // Entradas (recebimentos)
+        $sqlE = "SELECT 'ENTRADA' AS tipo, cr.CRE_ID AS id,
+                        cr.CRE_RECEBIDO_EM AS data,
+                        COALESCE(NULLIF(cr.CRE_VALOR_RECEBIDO,0), cr.CRE_VALOR) AS valor,
+                        COALESCE(NULLIF(cr.CRE_CLIENTE_NOME,''), cl.CLI_NOME_RAZAO, 'Cliente') AS contraparte,
+                        cr.CRE_DOCUMENTO AS documento,
+                        cr.CRE_STATUS AS status,
+                        cr.CRE_OFX_MOVIMENTO_FK AS ofx_fk,
+                        'tb_contas_receber' AS origem
+                 FROM tb_contas_receber cr
+                 LEFT JOIN cliente cl ON cl.CLI_ID = cr.CRE_CLIENTE_FK
+                 WHERE cr.CRE_BANCO_FK = ?
+                   AND cr.CRE_STATUS IN ({$phCre})
+                   AND cr.CRE_RECEBIDO_EM BETWEEN ? AND ?";
+        $stE = $pdo->prepare($sqlE);
+        $stE->execute(array_merge([$bancoFk], CRE_STATUS_PAGO, [$dtIniSql, $dtFimSql]));
+        $entradas = $stE->fetchAll(PDO::FETCH_ASSOC);
+
+        // Saídas (pagamentos)
+        $sqlS = "SELECT 'SAIDA' AS tipo, cp.CPG_CODIGO_PK AS id,
+                        cp.CPG_DATA_PAGAMENTO AS data,
+                        COALESCE(cp.CPG_VALOR_PAGO, cp.CPG_VALOR_PARCELA) AS valor,
+                        COALESCE(NULLIF(f.FOR_NOME_FANTASIA,''), f.FOR_RAZAO_SOCIAL, NULLIF(fu.FUN_NOME,''), '—') AS contraparte,
+                        cp.CPG_DOCUMENTO AS documento,
+                        cp.CPG_STATUS AS status,
+                        cp.CPG_OFX_MOVIMENTO_FK AS ofx_fk,
+                        'tb_contas_pagar' AS origem
+                 FROM tb_contas_pagar cp
+                 LEFT JOIN tb_fornecedor f ON f.FOR_CODIGO_PK = cp.CPG_FORNECEDOR_FK
+                 LEFT JOIN tb_funcionarios fu ON fu.FUN_CODIGO_PK = cp.CPG_FUNCIONARIO_FK
+                 WHERE cp.CPG_BANCO_PAGAMENTO_FK = ?
+                   AND cp.CPG_STATUS IN ({$phCpg})
+                   AND cp.CPG_DATA_PAGAMENTO BETWEEN ? AND ?";
+        $stS = $pdo->prepare($sqlS);
+        $stS->execute(array_merge([$bancoFk], CPG_STATUS_PAGO, [$dtIniSql, $dtFimSql]));
+        $saidas = $stS->fetchAll(PDO::FETCH_ASSOC);
+
+        $movs = array_merge($entradas, $saidas);
+        usort($movs, static fn($a, $b) => strcmp((string)$b['data'], (string)$a['data']));
+
+        // Resumo
+        $resumoE = array_sum(array_map(static fn($r) => (float)$r['valor'], $entradas));
+        $resumoS = array_sum(array_map(static fn($r) => (float)$r['valor'], $saidas));
+
+        json_out([
+            'ok' => true,
+            'banco_id' => $bancoFk,
+            'periodo_label' => $dtIni->format('d/m/Y') . ' a ' . $dtFim->format('d/m/Y'),
+            'rows' => $movs,
+            'resumo' => [
+                'qtd_entradas' => count($entradas),
+                'qtd_saidas'   => count($saidas),
+                'total_entradas' => round($resumoE, 2),
+                'total_saidas'   => round($resumoS, 2),
+                'resultado'      => round($resumoE - $resumoS, 2),
+            ],
+        ]);
+    }
+
     if ($acao === 'dre') {
         $phRecPago   = sql_placeholders(CRE_STATUS_PAGO);
         $phCpgPago   = sql_placeholders(CPG_STATUS_PAGO);

@@ -617,11 +617,123 @@ if (strtoupper((string)($_SESSION['user_perfil'] ?? '')) !== 'ADMIN') {
                     <div class="section-header">
                         <div>
                             <div class="subtitle">BANCOS</div>
-                            <h2>Saldos Bancários</h2>
+                            <h2 id="bancosPeriodoLabel">Saldos e movimentações no período</h2>
                         </div>
                     </div>
+
+                    <!-- KPIs gerais + filtro de banco -->
+                    <div class="d-flex flex-wrap gap-2 align-items-stretch mb-2">
+                        <div class="kpi-grid flex-grow-1 mb-0" id="bancosKpis" style="margin-bottom:0"></div>
+                        <div class="kpi-card d-flex flex-column justify-content-center" style="min-width:220px">
+                            <div class="kpi-lbl">Filtrar por banco</div>
+                            <select id="bancosFiltroBanco" class="form-select form-select-sm mt-1">
+                                <option value="0">Todos os bancos</option>
+                            </select>
+                            <div class="kpi-sub mt-1" id="bancosFiltroInfo" style="font-size:.72rem">Mostrando todos os bancos</div>
+                        </div>
+                    </div>
+
+                    <!-- Gráfico evolução consolidada -->
                     <div class="bi-card">
-                        <div id="viewBancosTabela"></div>
+                        <div class="card-head">
+                            <div>
+                                <div class="card-title">Movimentações diárias</div>
+                                <div class="card-sub">Entradas e saídas por dia no período (todos os bancos)</div>
+                            </div>
+                        </div>
+                        <div style="height:280px"><canvas id="chartBancosMov"></canvas></div>
+                    </div>
+
+                    <div class="grid-2">
+                        <!-- Top entradas -->
+                        <div class="bi-card">
+                            <div class="card-head">
+                                <div>
+                                    <div class="card-title"><i class="fa-solid fa-arrow-up" style="color:#16a34a"></i> Maiores entradas</div>
+                                    <div class="card-sub">Top 5 recebimentos do período</div>
+                                </div>
+                            </div>
+                            <div id="bancosTopEntradas"></div>
+                        </div>
+
+                        <!-- Top saídas -->
+                        <div class="bi-card">
+                            <div class="card-head">
+                                <div>
+                                    <div class="card-title"><i class="fa-solid fa-arrow-down" style="color:#dc2626"></i> Maiores saídas</div>
+                                    <div class="card-sub">Top 5 pagamentos do período</div>
+                                </div>
+                            </div>
+                            <div id="bancosTopSaidas"></div>
+                        </div>
+                    </div>
+
+                    <!-- Cards detalhados por banco -->
+                    <div class="bi-card">
+                        <div class="card-head">
+                            <div>
+                                <div class="card-title">Bancos</div>
+                                <div class="card-sub">Saldo atual, entradas e saídas por banco</div>
+                            </div>
+                        </div>
+                        <div id="bancosCardsBi" class="row g-3"></div>
+                    </div>
+
+                    <!-- Alertas -->
+                    <div class="bi-card">
+                        <div class="card-head">
+                            <div>
+                                <div class="card-title"><i class="fa-solid fa-bell text-muted"></i> Alertas dos bancos</div>
+                                <div class="card-sub">Saldo negativo, sem movimento ou conciliação baixa</div>
+                            </div>
+                        </div>
+                        <div id="bancosAlertas"></div>
+                    </div>
+                </div>
+
+                <!-- Modal de movimentações detalhadas do banco -->
+                <div class="modal fade" id="modalMovBanco" tabindex="-1" aria-hidden="true">
+                    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+                        <div class="modal-content" style="border:0;border-radius:14px;overflow:hidden">
+                            <div class="modal-header" style="background:#0f172a;color:#fff">
+                                <h5 class="modal-title fw-bold mb-0">
+                                    <i class="fa-solid fa-list-ul me-2"></i>Movimentações <span id="movBancoApelido" class="text-warning ms-2"></span>
+                                </h5>
+                                <button class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                            </div>
+                            <div class="modal-body" style="background:#f8fafc">
+                                <div class="row g-2 mb-3" id="movBancoResumo"></div>
+                                <div class="d-flex gap-2 align-items-center mb-2">
+                                    <input type="text" class="form-control form-control-sm" id="movBancoBusca" placeholder="Filtrar por contraparte, documento..." style="max-width:320px">
+                                    <select class="form-select form-select-sm" id="movBancoTipoFiltro" style="max-width:160px">
+                                        <option value="">Todos os tipos</option>
+                                        <option value="ENTRADA">Entradas</option>
+                                        <option value="SAIDA">Saídas</option>
+                                    </select>
+                                    <span class="ms-auto small text-muted" id="movBancoCount">—</span>
+                                </div>
+                                <div class="table-responsive border rounded bg-white">
+                                    <table class="table table-sm align-middle mb-0">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>Data</th>
+                                                <th>Tipo</th>
+                                                <th>Contraparte</th>
+                                                <th>Documento</th>
+                                                <th>Status</th>
+                                                <th class="text-end">Valor</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="movBancoBody">
+                                            <tr><td colspan="6" class="text-muted small text-center py-3">Carregando…</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -893,22 +1005,7 @@ if (strtoupper((string)($_SESSION['user_perfil'] ?? '')) !== 'ADMIN') {
             </div>
         `).join('') : `<div class="empty-bi"><i class="fa-solid fa-circle-check me-2" style="color:${COLORS.green}"></i>Nenhum alerta.</div>`;
 
-        // Bancos aba
-        document.getElementById('viewBancosTabela').innerHTML = bancos.length ? `
-            <div class="table-responsive">
-                <table class="table-bi">
-                    <thead><tr><th>Banco</th><th>Empresa</th><th>Data base</th><th class="text-end">Saldo atual</th></tr></thead>
-                    <tbody>${bancos.map(b => `
-                        <tr>
-                            <td><strong>${b.BAN_APELIDO || b.BAN_NOME || '-'}</strong></td>
-                            <td>${b.EMPRESA_NOME || '-'}</td>
-                            <td>${b.FCB_DATA_BR || '-'}</td>
-                            <td class="text-end mono"><strong>${brl(b.SALDO_ATUAL)}</strong></td>
-                        </tr>
-                    `).join('')}</tbody>
-                </table>
-            </div>
-        ` : `<div class="empty-bi"><i class="fa-solid fa-building-columns me-2"></i>Nenhum saldo encontrado.</div>`;
+        // Aba "Bancos" agora é renderizada pela função renderBancosBi() (mais rica)
     }
 
     // ---- DRE ---- //
@@ -1145,6 +1242,266 @@ if (strtoupper((string)($_SESSION['user_perfil'] ?? '')) !== 'ADMIN') {
         tbody.innerHTML = html;
     }
 
+    // ---- BANCOS (visão executiva) ---- //
+    let BANCOS_BI_DATA = null;   // cache da resposta completa
+    let BANCOS_BI_FILTRO = 0;    // 0 = todos, ou banco_id
+
+    function renderBancosBi(data) {
+        BANCOS_BI_DATA = data;
+        // Preenche o dropdown de filtro com os bancos disponíveis
+        const sel = document.getElementById('bancosFiltroBanco');
+        if (sel) {
+            const valAnterior = sel.value;
+            const opts = ['<option value="0">Todos os bancos</option>']
+                .concat((data.bancos || []).map(b =>
+                    `<option value="${b.BAN_ID}">${(b.BAN_APELIDO || b.BAN_NOME || '').replace(/</g,'&lt;')}</option>`
+                ));
+            sel.innerHTML = opts.join('');
+            sel.value = valAnterior || '0';
+        }
+        renderBancosBiFiltrado();
+    }
+
+    function renderBancosBiFiltrado() {
+        const data = BANCOS_BI_DATA;
+        if (!data) return;
+        const bancoFiltroId = BANCOS_BI_FILTRO;
+        const bancoSel = bancoFiltroId > 0 ? (data.bancos || []).find(b => Number(b.BAN_ID) === Number(bancoFiltroId)) : null;
+        const bancos = bancoSel ? [bancoSel] : (data.bancos || []);
+
+        const lbl = document.getElementById('bancosPeriodoLabel');
+        if (lbl) lbl.textContent = (bancoSel ? bancoSel.BAN_APELIDO + ' — ' : '') + (data.periodo_label || 'Saldos e movimentações no período');
+
+        const info = document.getElementById('bancosFiltroInfo');
+        if (info) info.textContent = bancoSel ? 'Filtrado por ' + bancoSel.BAN_APELIDO : 'Mostrando todos os bancos';
+
+        // Recalcula KPIs conforme bancos filtrados
+        let saldoTotal = 0, entradasTotal = 0, saidasTotal = 0, movsTotal = 0, movsConciliados = 0;
+        bancos.forEach(b => {
+            saldoTotal += Number(b.SALDO_ATUAL || 0);
+            entradasTotal += Number(b.ENTRADAS_VALOR || 0);
+            saidasTotal += Number(b.SAIDAS_VALOR || 0);
+            movsTotal += Number(b.OFX_TOTAL || 0);
+            movsConciliados += Number(b.OFX_CONCILIADOS || 0);
+        });
+        const resultado = entradasTotal - saidasTotal;
+        const percConc = movsTotal > 0 ? Math.round((movsConciliados / movsTotal) * 1000) / 10 : 100;
+
+        const k = { saldo_total: saldoTotal, entradas_total: entradasTotal, saidas_total: saidasTotal,
+                    resultado_periodo: resultado, movs_total: movsTotal, movs_conciliados: movsConciliados,
+                    perc_conciliacao: percConc, qtd_bancos: bancos.length };
+        document.getElementById('bancosKpis').innerHTML = `
+            <div class="kpi-card">
+                <div class="kpi-lbl">Saldo total das contas</div>
+                <div class="kpi-val">${brl(k.saldo_total)}</div>
+                <div class="kpi-sub">${fmtNum(k.qtd_bancos)} banco(s) ativo(s)</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-lbl">Entradas no período</div>
+                <div class="kpi-val" style="color:${COLORS.green}">${brl(k.entradas_total)}</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-lbl">Saídas no período</div>
+                <div class="kpi-val" style="color:${COLORS.red}">${brl(k.saidas_total)}</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-lbl">Resultado do período</div>
+                <div class="kpi-val" style="color:${(k.resultado_periodo || 0) >= 0 ? COLORS.green : COLORS.red}">${brl(k.resultado_periodo)}</div>
+                <div class="kpi-sub">${(k.resultado_periodo || 0) >= 0 ? 'Superavit' : 'Déficit'}</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-lbl">Movs. OFX no período</div>
+                <div class="kpi-val">${fmtNum(k.movs_total)}</div>
+                <div class="kpi-sub" style="color:${(k.perc_conciliacao || 0) >= 80 ? COLORS.green : COLORS.amber}">${k.perc_conciliacao || 0}% conciliados</div>
+            </div>
+        `;
+
+        // Gráfico de movimentações diárias (entradas vs saídas)
+        // Quando há filtro de banco, usa série específica desse banco; senão usa consolidada.
+        const g = data.grafico || { labels: [], entradas: [], saidas: [] };
+        let chartLabels  = g.labels;
+        let chartEntradas = g.entradas;
+        let chartSaidas  = g.saidas;
+        if (bancoSel) {
+            chartEntradas = bancoSel.ENT_DIA || [];
+            chartSaidas   = bancoSel.SAI_DIA || [];
+        }
+        if (charts.bancosMov) charts.bancosMov.destroy();
+        charts.bancosMov = new Chart(document.getElementById('chartBancosMov'), {
+            type: 'bar',
+            data: {
+                labels: chartLabels,
+                datasets: [
+                    { label: 'Entradas', data: chartEntradas, backgroundColor: COLORS.green10, borderColor: COLORS.green, borderWidth: 1 },
+                    { label: 'Saídas',   data: chartSaidas,   backgroundColor: COLORS.red10,   borderColor: COLORS.red,   borderWidth: 1 },
+                ]
+            },
+            options: chartOpts({
+                scales: { y: { ticks: { callback: v => brl(v) } } },
+            })
+        });
+
+        // Top entradas e saídas (filtra por banco se houver seleção)
+        function rowTop(arr, cor) {
+            if (!arr || !arr.length) return '<div class="empty-bi">Sem registros.</div>';
+            return arr.map(r => `
+                <div class="mini-item">
+                    <div style="flex:1;min-width:0">
+                        <div class="text-truncate" style="font-weight:600;font-size:.85rem">${r.contraparte || '—'}</div>
+                        <div class="text-muted small">${r.banco || '—'} • ${r.data ? new Date(r.data+'T00:00:00').toLocaleDateString('pt-BR') : ''}</div>
+                    </div>
+                    <span class="mini-item-val" style="color:${cor}">${brl(r.valor)}</span>
+                </div>
+            `).join('');
+        }
+        const filtrarTop = (arr) => bancoSel
+            ? (arr || []).filter(r => Number(r.banco_id) === Number(bancoSel.BAN_ID))
+            : (arr || []);
+        document.getElementById('bancosTopEntradas').innerHTML = rowTop(filtrarTop(data.top_entradas), COLORS.green);
+        document.getElementById('bancosTopSaidas').innerHTML   = rowTop(filtrarTop(data.top_saidas),   COLORS.red);
+
+        // Cards por banco (mostra só o filtrado se houver seleção)
+        const cardsHtml = bancos.length ? bancos.map(b => {
+            const sal = Number(b.SALDO_ATUAL || 0);
+            const varNum = Number(b.VARIACAO_PERIODO || 0);
+            const corSaldo = sal < 0 ? COLORS.red : '#0f172a';
+            const corVar   = varNum >= 0 ? COLORS.green : COLORS.red;
+            const setaVar  = varNum >= 0 ? '↑' : '↓';
+            const percLbl  = b.OFX_TOTAL > 0 ? `${b.OFX_CONCILIADOS}/${b.OFX_TOTAL} (${b.OFX_PERC}%)` : '—';
+            const percCor  = b.OFX_TOTAL === 0 ? '#94a3b8' : (b.OFX_PERC >= 80 ? COLORS.green : COLORS.amber);
+            const ag = (b.BAN_AGENCIA || '') + (b.BAN_AGENCIA_DV ? '-' + b.BAN_AGENCIA_DV : '');
+            const cc = (b.BAN_CONTA   || '') + (b.BAN_CONTA_DV   ? '-' + b.BAN_CONTA_DV   : '');
+            return `
+                <div class="col-12 col-md-6 col-xxl-4">
+                    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;min-height:230px">
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div>
+                                <div style="font-weight:700;font-size:1rem">${b.BAN_APELIDO || b.BAN_NOME || 'Banco'}</div>
+                                <div class="text-muted small">${b.BAN_CODIGO || ''} • ${b.BAN_NOME || ''}</div>
+                                <div class="text-muted small">Ag. ${ag || '—'} / Cc. ${cc || '—'}</div>
+                            </div>
+                            <button class="btn btn-sm btn-outline-primary" onclick="abrirMovimentosBanco(${b.BAN_ID}, '${(b.BAN_APELIDO || '').replace(/'/g,"\\'")}')" title="Ver movimentações do período">
+                                <i class="fa-solid fa-list-ul"></i>
+                            </button>
+                        </div>
+
+                        <div>
+                            <div class="text-muted small" style="text-transform:uppercase;letter-spacing:.06em;font-size:.7rem;font-weight:600">Saldo atual</div>
+                            <div style="font-size:1.5rem;font-weight:700;color:${corSaldo}">${brl(sal)}</div>
+                            <div style="color:${corVar};font-size:.82rem;font-weight:600">${setaVar} ${brl(Math.abs(varNum))} no período</div>
+                        </div>
+
+                        <div class="d-flex gap-3 small">
+                            <div style="flex:1">
+                                <div class="text-muted" style="font-size:.7rem;font-weight:600;text-transform:uppercase">Entradas</div>
+                                <div style="color:${COLORS.green};font-weight:700">${brl(b.ENTRADAS_VALOR)}</div>
+                                <div class="text-muted" style="font-size:.72rem">${fmtNum(b.ENTRADAS_QTD)} lançamento(s)</div>
+                            </div>
+                            <div style="flex:1">
+                                <div class="text-muted" style="font-size:.7rem;font-weight:600;text-transform:uppercase">Saídas</div>
+                                <div style="color:${COLORS.red};font-weight:700">${brl(b.SAIDAS_VALOR)}</div>
+                                <div class="text-muted" style="font-size:.72rem">${fmtNum(b.SAIDAS_QTD)} lançamento(s)</div>
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-center small" style="border-top:1px solid #f1f5f9;padding-top:8px;margin-top:auto">
+                            <span class="text-muted">Conciliação OFX</span>
+                            <span style="color:${percCor};font-weight:600">${percLbl}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('') : '<div class="col-12"><div class="empty-bi">Nenhum banco ativo encontrado.</div></div>';
+        document.getElementById('bancosCardsBi').innerHTML = cardsHtml;
+
+        // Alertas (filtra por banco se houver seleção)
+        const alertas = (data.alertas || []).filter(a => !bancoSel || a.banco === bancoSel.BAN_APELIDO);
+        const alertasMap = {
+            danger:  { color: COLORS.red,   icon: 'fa-circle-exclamation' },
+            warning: { color: COLORS.amber, icon: 'fa-triangle-exclamation' },
+            info:    { color: COLORS.blue,  icon: 'fa-circle-info' }
+        };
+        document.getElementById('bancosAlertas').innerHTML = alertas.length ? alertas.map(a => {
+            const m = alertasMap[a.nivel] || alertasMap.info;
+            return `
+                <div class="alert-item">
+                    <div class="title"><i class="fa-solid ${m.icon} me-1" style="color:${m.color}"></i>${a.titulo} — <span class="text-muted">${a.banco || ''}</span></div>
+                    <div class="desc">${a.descricao}</div>
+                </div>
+            `;
+        }).join('') : `<div class="empty-bi"><i class="fa-solid fa-circle-check me-2" style="color:${COLORS.green}"></i>Sem alertas. Bancos saudáveis no período.</div>`;
+    }
+
+    // Modal de movimentações detalhadas de um banco
+    let MOV_BANCO_CACHE = [];
+    window.abrirMovimentosBanco = async function(bancoId, apelido) {
+        document.getElementById('movBancoApelido').textContent = apelido || '';
+        document.getElementById('movBancoBody').innerHTML = '<tr><td colspan="6" class="text-muted small text-center py-3">Carregando…</td></tr>';
+        document.getElementById('movBancoResumo').innerHTML = '';
+        document.getElementById('movBancoBusca').value = '';
+        document.getElementById('movBancoTipoFiltro').value = '';
+        document.getElementById('movBancoCount').textContent = '—';
+        const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalMovBanco'));
+        modal.show();
+
+        try {
+            const params = { acao: 'movimentos_banco', banco_id: bancoId, periodo: PERIODO_ATUAL, empresa_id: EMPRESA_ATUAL };
+            if (DATA_INI_CUSTOM && DATA_FIM_CUSTOM) { params.data_ini = DATA_INI_CUSTOM; params.data_fim = DATA_FIM_CUSTOM; }
+            const j = await api(params);
+            MOV_BANCO_CACHE = j.rows || [];
+            const res = j.resumo || {};
+            document.getElementById('movBancoResumo').innerHTML = `
+                <div class="col-md-3"><div class="kpi-card"><div class="kpi-lbl">Entradas</div><div class="kpi-val" style="color:${COLORS.green}">${brl(res.total_entradas)}</div><div class="kpi-sub">${fmtNum(res.qtd_entradas)} item(s)</div></div></div>
+                <div class="col-md-3"><div class="kpi-card"><div class="kpi-lbl">Saídas</div><div class="kpi-val" style="color:${COLORS.red}">${brl(res.total_saidas)}</div><div class="kpi-sub">${fmtNum(res.qtd_saidas)} item(s)</div></div></div>
+                <div class="col-md-3"><div class="kpi-card"><div class="kpi-lbl">Resultado</div><div class="kpi-val" style="color:${(res.resultado||0)>=0?COLORS.green:COLORS.red}">${brl(res.resultado)}</div></div></div>
+                <div class="col-md-3"><div class="kpi-card"><div class="kpi-lbl">Período</div><div class="kpi-val" style="font-size:1rem">${j.periodo_label || '—'}</div></div></div>
+            `;
+            renderMovBancoTabela();
+        } catch (err) {
+            document.getElementById('movBancoBody').innerHTML = `<tr><td colspan="6" class="text-danger small text-center py-3">Erro: ${err.message || err}</td></tr>`;
+        }
+    };
+
+    function renderMovBancoTabela() {
+        const busca = (document.getElementById('movBancoBusca').value || '').toLowerCase();
+        const tipo  = document.getElementById('movBancoTipoFiltro').value;
+        let rows = MOV_BANCO_CACHE.slice();
+        if (tipo) rows = rows.filter(r => r.tipo === tipo);
+        if (busca) rows = rows.filter(r =>
+            (r.contraparte || '').toLowerCase().includes(busca) ||
+            (r.documento   || '').toLowerCase().includes(busca));
+        document.getElementById('movBancoCount').textContent = `${rows.length} de ${MOV_BANCO_CACHE.length}`;
+        if (!rows.length) {
+            document.getElementById('movBancoBody').innerHTML = '<tr><td colspan="6" class="text-muted small text-center py-3">Nenhum movimento encontrado.</td></tr>';
+            return;
+        }
+        document.getElementById('movBancoBody').innerHTML = rows.map(r => {
+            const ent = r.tipo === 'ENTRADA';
+            const cor = ent ? COLORS.green : COLORS.red;
+            const sinal = ent ? '+' : '−';
+            const badge = ent
+                ? `<span class="status-badge" style="background:${COLORS.green10};color:${COLORS.green}">Entrada</span>`
+                : `<span class="status-badge" style="background:${COLORS.red10};color:${COLORS.red}">Saída</span>`;
+            const dataStr = r.data ? new Date(r.data + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
+            return `<tr>
+                <td class="mono small">${dataStr}</td>
+                <td>${badge}</td>
+                <td class="small">${r.contraparte || '—'}</td>
+                <td class="text-muted small">${r.documento || '—'}</td>
+                <td class="small">${r.status || '—'}</td>
+                <td class="text-end mono" style="color:${cor};font-weight:600">${sinal}${brl(Math.abs(r.valor))}</td>
+            </tr>`;
+        }).join('');
+    }
+    document.getElementById('movBancoBusca')?.addEventListener('input', renderMovBancoTabela);
+    document.getElementById('movBancoTipoFiltro')?.addEventListener('change', renderMovBancoTabela);
+
+    // Filtro de banco na aba Bancos do BI — re-render usando dados já cacheados
+    document.getElementById('bancosFiltroBanco')?.addEventListener('change', function() {
+        BANCOS_BI_FILTRO = Number(this.value || 0);
+        renderBancosBiFiltrado();
+    });
+
     // ---- REFRESH ---- //
     async function refresh() {
         const params = { periodo: PERIODO_ATUAL, empresa_id: EMPRESA_ATUAL };
@@ -1154,12 +1511,13 @@ if (strtoupper((string)($_SESSION['user_perfil'] ?? '')) !== 'ADMIN') {
         }
 
         try {
-            const [empresas, overview, dre, contratos, previsao] = await Promise.all([
+            const [empresas, overview, dre, contratos, previsao, bancosDet] = await Promise.all([
                 api({ acao: 'empresas' }),
                 api({ acao: 'overview', ...params }),
                 api({ acao: 'dre', ...params }),
                 api({ acao: 'contratos', ...params }),
                 api({ acao: 'previsao', ...params }),
+                api({ acao: 'bancos_detalhado', ...params }),
             ]);
 
             renderEmpresas(empresas.rows || []);
@@ -1167,6 +1525,7 @@ if (strtoupper((string)($_SESSION['user_perfil'] ?? '')) !== 'ADMIN') {
             renderDRE(dre);
             renderContratos(contratos);
             renderPrevisao(previsao);
+            renderBancosBi(bancosDet);
         } catch (err) {
             console.error('BI refresh error:', err);
             Swal.fire({ icon: 'error', title: 'Erro ao carregar BI', text: err.message });
