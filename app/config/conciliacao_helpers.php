@@ -301,29 +301,81 @@ if (!function_exists('reverterAlocacaoConta')) {
 }
 
 if (!function_exists('recalcularStatusMovimento')) {
+    /**
+     * Recalcula COM_STATUS / COM_CONCILIADO de um movimento OFX
+     * baseado no estado real dos vínculos (novos e legados).
+     *
+     * Estados possíveis em COM_CONCILIADO:
+     *   - 'NAO'     → sem vínculos ativos
+     *   - 'PARCIAL' → tem vínculo(s) mas soma alocada < valor do movimento
+     *   - 'SIM'     → tem vínculo(s) e soma alocada cobre o valor (tolerância 0,5 ct)
+     *
+     * Estados possíveis em COM_STATUS:
+     *   - 'IMPORTADO' (quando NAO conciliado)
+     *   - 'CONCILIADO' (quando PARCIAL ou SIM)
+     */
     function recalcularStatusMovimento(PDO $pdo, int $movFk): void
     {
-        $stV = $pdo->prepare("SELECT COUNT(*) FROM tb_conciliacao_vinculo
+        // 1) Soma dos vínculos ativos (novos)
+        $stV = $pdo->prepare("SELECT COALESCE(SUM(VIN_VALOR_ALOCADO), 0) AS soma, COUNT(*) AS qtd
+                              FROM tb_conciliacao_vinculo
                               WHERE VIN_OFX_MOVIMENTO_FK = ? AND VIN_STATUS = 'ATIVO'");
         $stV->execute([$movFk]);
-        $temNovo = (int)$stV->fetchColumn() > 0;
+        $vinNovos = $stV->fetch(PDO::FETCH_ASSOC) ?: ['soma' => 0, 'qtd' => 0];
 
-        $stCpg = $pdo->prepare("SELECT COUNT(*) FROM tb_contas_pagar WHERE CPG_OFX_MOVIMENTO_FK = ?");
+        // 2) Vínculos legados (1:1 via *_OFX_MOVIMENTO_FK) — conta apenas presença
+        //    Como são 1:1 e cobrem o valor cheio do movimento, somam o COM_VALOR.
+        $stCpg = $pdo->prepare("SELECT COUNT(*) AS qtd FROM tb_contas_pagar WHERE CPG_OFX_MOVIMENTO_FK = ?");
         $stCpg->execute([$movFk]);
         $temLegadoP = (int)$stCpg->fetchColumn() > 0;
 
-        $stCre = $pdo->prepare("SELECT COUNT(*) FROM tb_contas_receber WHERE CRE_OFX_MOVIMENTO_FK = ?");
+        $stCre = $pdo->prepare("SELECT COUNT(*) AS qtd FROM tb_contas_receber WHERE CRE_OFX_MOVIMENTO_FK = ?");
         $stCre->execute([$movFk]);
         $temLegadoR = (int)$stCre->fetchColumn() > 0;
 
-        if ($temNovo || $temLegadoP || $temLegadoR) {
-            return;
+        // 3) Valor absoluto do movimento (referência para comparação)
+        $stMov = $pdo->prepare("SELECT ABS(COM_VALOR) AS valor_abs FROM tb_conciliacao_ofx_movimento WHERE COM_CODIGO_PK = ?");
+        $stMov->execute([$movFk]);
+        $valorAbs = (float)$stMov->fetchColumn();
+
+        $somaVinculos = (float)$vinNovos['soma'];
+        $qtdVinculos  = (int)$vinNovos['qtd'];
+        $temLegado    = $temLegadoP || $temLegadoR;
+
+        // Decisão:
+        // - Sem nada → IMPORTADO/NAO
+        // - Legado 1:1 → CONCILIADO/SIM (cobre cheio)
+        // - Vínculos novos com soma >= valor (tol. 0,5 ct) → CONCILIADO/SIM
+        // - Vínculos novos com soma < valor → CONCILIADO/PARCIAL
+        if (!$temLegado && $qtdVinculos === 0) {
+            $novoStatus = 'IMPORTADO';
+            $novoConcil = 'NAO';
+        } elseif ($temLegado) {
+            $novoStatus = 'CONCILIADO';
+            $novoConcil = 'SIM';
+        } else {
+            // Só tem vínculos novos
+            if ($somaVinculos + 0.005 >= $valorAbs) {
+                $novoStatus = 'CONCILIADO';
+                $novoConcil = 'SIM';
+            } else {
+                $novoStatus = 'CONCILIADO';
+                $novoConcil = 'PARCIAL';
+            }
         }
 
-        $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento
-                       SET COM_STATUS = 'IMPORTADO', COM_CONCILIADO = 'NAO',
-                           COM_REFERENCIA_TIPO = NULL, COM_REFERENCIA_FK = NULL
-                       WHERE COM_CODIGO_PK = ?")
-            ->execute([$movFk]);
+        // Se voltou a IMPORTADO/NAO, limpa também a referência legacy.
+        if ($novoStatus === 'IMPORTADO') {
+            $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento
+                           SET COM_STATUS = 'IMPORTADO', COM_CONCILIADO = 'NAO',
+                               COM_REFERENCIA_TIPO = NULL, COM_REFERENCIA_FK = NULL
+                           WHERE COM_CODIGO_PK = ?")
+                ->execute([$movFk]);
+        } else {
+            $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento
+                           SET COM_STATUS = ?, COM_CONCILIADO = ?
+                           WHERE COM_CODIGO_PK = ?")
+                ->execute([$novoStatus, $novoConcil, $movFk]);
+        }
     }
 }

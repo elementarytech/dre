@@ -342,6 +342,7 @@ try {
                 m.COM_VALOR,
                 m.COM_SALDO_APOS,
                 m.COM_STATUS,
+                m.COM_CONCILIADO,
                 b.BAN_APELIDO,
                 b.BAN_NOME
             FROM tb_conciliacao_ofx_movimento m
@@ -362,7 +363,18 @@ try {
             $sql .= " AND (m.COM_DESCRICAO LIKE :busca OR CAST(m.COM_VALOR AS CHAR) LIKE :busca)";
             $params[':busca'] = '%' . $busca . '%';
         }
-        if ($status !== '') {
+        // Filtros estendidos para o COM_CONCILIADO:
+        //   PENDENTES_PARCIAIS → esconde os totalmente conciliados (default operacional)
+        //   PARCIAL            → só os com conciliação parcial
+        //   IMPORTADO/PENDENTE → só os não conciliados ainda
+        //   CONCILIADO         → só os já fechados (SIM)
+        if ($status === 'PENDENTES_PARCIAIS') {
+            $sql .= " AND COALESCE(m.COM_CONCILIADO,'NAO') IN ('NAO','PARCIAL')";
+        } elseif ($status === 'PARCIAL') {
+            $sql .= " AND m.COM_CONCILIADO = 'PARCIAL'";
+        } elseif ($status === 'CONCILIADO') {
+            $sql .= " AND m.COM_CONCILIADO = 'SIM'";
+        } elseif ($status !== '') {
             $sql .= " AND m.COM_STATUS = :status";
             $params[':status'] = $status;
         }
@@ -381,6 +393,7 @@ try {
                 'valor' => (float)$r['COM_VALOR'],
                 'saldo_apos' => (float)$r['COM_SALDO_APOS'],
                 'status' => (string)$r['COM_STATUS'],
+                'conciliado' => (string)$r['COM_CONCILIADO'],
                 'banco_nome' => (string)($r['BAN_APELIDO'] ?: $r['BAN_NOME']),
             ];
         }
@@ -973,6 +986,10 @@ try {
         // Dedup verifica AMBOS os hashes:
         //  - hash_legado (inclui banco/conta — para detectar reimport no MESMO banco já feito antes da Fase G)
         //  - hash_fingerprint (só fingerprint do movimento — detecta reimport mesmo em banco diferente)
+        // Ambos os hashes incluem o FITID (documento). Optamos por NÃO usar fingerprint
+        // sem FITID porque transações legítimas distintas podem ter mesmo
+        // (data + valor + descrição) — ex: 2 PIX iguais pra mesma pessoa no mesmo dia.
+        // O FITID é o que diferencia transações reais — confiamos no banco.
         $stDup = $pdo->prepare("
             SELECT COM_CODIGO_PK, COM_BANCO_FK
             FROM tb_conciliacao_ofx_movimento
@@ -2358,15 +2375,17 @@ try {
         $bancoFk  = (int)$mov['COM_BANCO_FK'];
         $dataMov  = (string)$mov['COM_DATA_MOVIMENTO'];
 
+        // Soma das alocações pode ser MENOR que o movimento (conciliação parcial),
+        // mas NÃO pode ser maior (não dá pra super-alocar dinheiro que não tem).
         $somaAlocada = 0.0;
         foreach ($itens as $it) {
             $somaAlocada += abs((float)($it['valor_alocado'] ?? 0));
         }
-        if (abs($somaAlocada - $valorMov) > 0.005) {
+        if ($somaAlocada > $valorMov + 0.005) {
             json_out([
                 'ok'  => false,
                 'msg' => sprintf(
-                    'Soma das alocações (R$ %s) não confere com o valor do movimento (R$ %s).',
+                    'Soma das alocações (R$ %s) é MAIOR que o valor do movimento (R$ %s). Reduza as alocações.',
                     number_format($somaAlocada, 2, ',', '.'),
                     number_format($valorMov, 2, ',', '.')
                 ),
@@ -2418,14 +2437,29 @@ try {
             $refTipo = $primeiroVinculoPagar !== null ? 'CONTA_PAGAR' : 'CONTA_RECEBER';
             $refFk   = $primeiroVinculoPagar ?? $primeiroVinculoReceber;
 
+            // Atualiza apenas a referência (compat. com queries legadas) — o COM_STATUS/
+            // COM_CONCILIADO é decidido pela função canônica, que detecta PARCIAL/SIM.
             $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento
-                           SET COM_STATUS = 'CONCILIADO', COM_CONCILIADO = 'SIM',
-                               COM_REFERENCIA_TIPO = ?, COM_REFERENCIA_FK = ?
+                           SET COM_REFERENCIA_TIPO = ?, COM_REFERENCIA_FK = ?
                            WHERE COM_CODIGO_PK = ?")
                 ->execute([$refTipo, $refFk, $movFk]);
+            recalcularStatusMovimento($pdo, $movFk);
+
+            // Lê o estado final pra dar feedback claro no JSON
+            $st = $pdo->prepare("SELECT COM_CONCILIADO FROM tb_conciliacao_ofx_movimento WHERE COM_CODIGO_PK = ?");
+            $st->execute([$movFk]);
+            $estadoFinal = (string)$st->fetchColumn();
+            $msgFinal = count($itens) . ' vínculo(s) registrado(s)';
+            if ($estadoFinal === 'PARCIAL') {
+                $msgFinal .= sprintf(' — conciliação PARCIAL (R$ %s de R$ %s).',
+                    number_format($somaAlocada, 2, ',', '.'),
+                    number_format($valorMov, 2, ',', '.'));
+            } else {
+                $msgFinal .= ' e conciliação confirmada.';
+            }
 
             $pdo->commit();
-            json_out(['ok' => true, 'msg' => count($itens) . ' vínculo(s) registrado(s) e conciliação confirmada.']);
+            json_out(['ok' => true, 'msg' => $msgFinal, 'estado' => $estadoFinal]);
         } catch (Throwable $e) {
             $pdo->rollBack();
             json_out(['ok' => false, 'msg' => 'Falha: ' . $e->getMessage()], 422);

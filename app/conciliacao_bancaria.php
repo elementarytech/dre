@@ -701,8 +701,10 @@ $hojeTopo = date('d/m/Y');
                                 <div class="pill">
                                     <i class="bi bi-funnel text-secondary" style="font-size:12px"></i>
                                     <select id="selStatusExtrato" class="form-select form-select-sm border-0 bg-transparent" style="min-width:130px;padding-right:1.6rem">
+                                        <option value="PENDENTES_PARCIAIS" selected>Pendentes + Parciais</option>
                                         <option value="">Todos</option>
                                         <option value="IMPORTADO">Importado</option>
+                                        <option value="PARCIAL">Parcial</option>
                                         <option value="CONCILIADO">Conciliado</option>
                                         <option value="PENDENTE">Pendente</option>
                                     </select>
@@ -1285,7 +1287,10 @@ $hojeTopo = date('d/m/Y');
             return `<span class="badge badge-soft-secondary">${status || '-'}</span>`;
         }
 
-        function badgeExtrato(status) {
+        function badgeExtrato(status, conciliado) {
+            // Status PARCIAL é decidido pelo COM_CONCILIADO ('PARCIAL'), não pelo COM_STATUS
+            // (que continua 'CONCILIADO' quando há qualquer vínculo).
+            if (conciliado === "PARCIAL") return `<span class="badge badge-soft-warning" style="background:#fef3c7;color:#92400e">Parcial</span>`;
             if (status === "CONCILIADO") return `<span class="badge badge-soft-success">Conciliado</span>`;
             if (status === "IMPORTADO") return `<span class="badge badge-soft-secondary">Importado</span>`;
             if (status === "PENDENTE") return `<span class="badge badge-soft-warning">Pendente</span>`;
@@ -1475,7 +1480,7 @@ $hojeTopo = date('d/m/Y');
                 <td><span class="truncate" title="${r.descricao}">${r.descricao}</span></td>
                 <td class="text-end mono small ${isOut ? 'text-danger' : 'text-success'}">${isOut ? '−' : '+'}R$ ${money(Math.abs(valor))}</td>
                 <td class="text-end mono small">R$ ${money(r.saldo_apos)}</td>
-                <td>${badgeExtrato(r.status)}</td>
+                <td>${badgeExtrato(r.status, r.conciliado)}</td>
                 <td class="text-center">
                     ${r.status !== 'CONCILIADO'
                         ? `<button class="btn-icon is-success btn-detalhe-ext" data-id="${r.id}" title="Detalhe/Conciliar"><i class="bi bi-link-45deg"></i></button>`
@@ -1585,7 +1590,7 @@ $hojeTopo = date('d/m/Y');
             <div class="col-12"><p class="small text-muted mb-0">Descrição</p><p class="fw-semibold mb-1">${escapeHtml(r.descricao)}</p></div>
             <div class="col-6"><p class="small text-muted mb-0">Valor</p><p class="fw-bold mono fs-5 ${isOut ? 'text-danger' : 'text-success'} mb-1">${isOut ? '−' : '+'}R$ ${money(Math.abs(valor))}</p></div>
             <div class="col-6"><p class="small text-muted mb-0">Saldo após</p><p class="fw-semibold mono mb-1">R$ ${money(r.saldo_apos)}</p></div>
-            <div class="col-12"><p class="small text-muted mb-0">Status</p>${badgeExtrato(r.status)}</div>
+            <div class="col-12"><p class="small text-muted mb-0">Status</p>${badgeExtrato(r.status, r.conciliado)}</div>
             <div class="col-12">${blocoMatch}</div>
             <div class="col-12">${blocoVinculos}</div>
         </div>
@@ -3353,16 +3358,21 @@ $hojeTopo = date('d/m/Y');
                        do sistema (movimentos e cabeçalho).
                    </div>`;
 
+            // O modal Bootstrap "modalHistoricoOfx" usa enforceFocus, que rouba o foco do
+            // SweetAlert por cima — bloqueando a digitação na senha. Fix: renderizar o
+            // SweetAlert DENTRO do próprio modal Bootstrap (mesmo contexto de foco).
             const { value: formValues, isConfirmed } = await Swal.fire({
                 title: 'Excluir importação OFX?',
                 icon: 'warning',
+                target: document.getElementById('modalHistoricoOfx'),
+                heightAuto: false,
                 html: `
                     ${aviso}
                     <div class="text-start small">
                         <label class="form-label small fw-bold mt-2">Motivo (opcional)</label>
                         <input id="swal-hist-motivo" class="form-control form-control-sm" placeholder="Ex.: arquivo OFX errado, datas erradas, vou reimportar correto">
                         <label class="form-label small fw-bold mt-2">Senha de um ADMIN <span class="text-danger">*</span></label>
-                        <input id="swal-hist-senha" type="password" class="form-control form-control-sm" placeholder="Senha de qualquer usuário ADMIN">
+                        <input id="swal-hist-senha" type="password" class="form-control form-control-sm" placeholder="Senha de qualquer usuário ADMIN" autocomplete="off">
                     </div>
                 `,
                 showCancelButton: true,
@@ -3370,6 +3380,13 @@ $hojeTopo = date('d/m/Y');
                 cancelButtonText: 'Cancelar',
                 confirmButtonColor: '#dc2626',
                 focusConfirm: false,
+                didOpen: () => {
+                    // Garante foco no campo senha assim que abre
+                    setTimeout(() => {
+                        const inp = document.getElementById('swal-hist-senha');
+                        if (inp) inp.focus();
+                    }, 50);
+                },
                 preConfirm: () => {
                     const senha = document.getElementById('swal-hist-senha').value.trim();
                     const motivo = document.getElementById('swal-hist-motivo').value.trim();
