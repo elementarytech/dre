@@ -324,9 +324,11 @@ require_once __DIR__ . '/config/auth.php';
                         <input type="hidden" id="trbOrigemId" value="">
 
                         <div class="alert alert-light border py-2 small mb-3">
-                            <i class="fa-solid fa-info-circle me-1"></i>
-                            A transferência debita o saldo do banco origem e credita no destino. Os ajustes aparecem
-                            no extrato bancário e atualizam o saldo ERP em todas as telas.
+                            <i class="fa-solid fa-bolt text-warning me-1"></i>
+                            <strong>Transferência rápida:</strong> debita o saldo da origem e credita no destino.
+                            Saldo atualiza imediatamente em todas as telas (BI, Fluxo de Caixa, Conciliação).
+                            <strong>Não gera linhas para conciliar depois</strong> — o OFX real do banco, quando importado,
+                            será reconhecido como transferência interna automaticamente.
                         </div>
 
                         <div class="mb-3">
@@ -1454,6 +1456,9 @@ require_once __DIR__ . '/config/auth.php';
                 fd.append('valor',            valor.toFixed(2));
                 fd.append('data',             data);
                 fd.append('descricao',        descricao);
+                // Modo "transferência rápida" — não gera movimentos OFX sintéticos.
+                // Só atualiza saldo ERP, sem criar fantasmas no extrato pra conciliar depois.
+                fd.append('gerar_movimentos_ofx', '0');
 
                 const r = await fetch(ENDPOINT_TRB, { method:'POST', body: fd, credentials: 'same-origin' });
                 const j = await r.json();

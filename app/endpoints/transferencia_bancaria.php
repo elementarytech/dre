@@ -113,6 +113,12 @@ try {
         $data           = trim((string)($_POST['data']     ?? ''));
         $descricao      = trim((string)($_POST['descricao'] ?? ''));
         $usuario        = (string)($_SESSION['user_nome']  ?? 'sistema');
+        // Flag opcional: quando 0/false, pula a criação dos movimentos OFX sintéticos.
+        // Usado pela "transferência rápida" do bancos.php — só ajusta saldo ERP, sem
+        // gerar fantasmas no extrato pra conciliar depois.
+        // Default = 1 (true) pra preservar comportamento da tela transferencia_bancaria.php.
+        $gerarOfx = !isset($_POST['gerar_movimentos_ofx'])
+                    || in_array((string)$_POST['gerar_movimentos_ofx'], ['1', 'true', 'on'], true);
 
         if ($bancoOrigemId <= 0 || $bancoDestinoId <= 0) {
             json_out_trb(['ok' => false, 'msg' => 'Selecione os bancos de origem e destino.'], 422);
@@ -194,46 +200,52 @@ try {
         ]);
         $ajusteDestinoId = (int)$pdo->lastInsertId();
 
-        // Movimentos OFX sintéticos (visibilidade no extrato)
-        $stMov = $pdo->prepare("
-            INSERT INTO tb_conciliacao_ofx_movimento (
-                COM_IMPORTACAO_FK, COM_BANCO_FK, COM_CONTA_REF,
-                COM_DATA_MOVIMENTO, COM_DOCUMENTO, COM_DESCRICAO,
-                COM_VALOR, COM_SALDO_APOS, COM_TIPO, COM_HASH,
-                COM_STATUS, COM_CONCILIADO, COM_REFERENCIA_TIPO
-            ) VALUES (
-                NULL, :banco_fk, :conta_ref,
-                :data, 'TRANSFERENCIA', :descricao,
-                :valor, :saldo_apos, :tipo, :hash,
-                'IMPORTADO', 'NAO', 'TRANSFERENCIA_BANCARIA'
-            )
-        ");
+        // Movimentos OFX sintéticos (visibilidade no extrato).
+        // Pulado quando gerar_movimentos_ofx = 0 (modo "transferência rápida" do bancos.php):
+        // só atualiza saldo ERP, sem criar linhas no extrato pra conciliar depois.
+        $movOrigemId  = null;
+        $movDestinoId = null;
+        if ($gerarOfx) {
+            $stMov = $pdo->prepare("
+                INSERT INTO tb_conciliacao_ofx_movimento (
+                    COM_IMPORTACAO_FK, COM_BANCO_FK, COM_CONTA_REF,
+                    COM_DATA_MOVIMENTO, COM_DOCUMENTO, COM_DESCRICAO,
+                    COM_VALOR, COM_SALDO_APOS, COM_TIPO, COM_HASH,
+                    COM_STATUS, COM_CONCILIADO, COM_REFERENCIA_TIPO
+                ) VALUES (
+                    NULL, :banco_fk, :conta_ref,
+                    :data, 'TRANSFERENCIA', :descricao,
+                    :valor, :saldo_apos, :tipo, :hash,
+                    'IMPORTADO', 'NAO', 'TRANSFERENCIA_BANCARIA'
+                )
+            ");
 
-        $hashOrigem = hash('sha256', $bancoOrigemId . '|' . $contaRefOrigem . '|' . $data . '|-' . $valor . '|' . $obs . '|TRB|' . microtime(true));
-        $stMov->execute([
-            ':banco_fk'   => $bancoOrigemId,
-            ':conta_ref'  => $contaRefOrigem,
-            ':data'       => $data,
-            ':descricao'  => mb_substr('TRANSFERENCIA SAIDA - ' . $obs, 0, 255),
-            ':valor'      => -$valor,
-            ':saldo_apos' => $saldoNovoOrigem,
-            ':tipo'       => 'DEBITO',
-            ':hash'       => $hashOrigem,
-        ]);
-        $movOrigemId = (int)$pdo->lastInsertId();
+            $hashOrigem = hash('sha256', $bancoOrigemId . '|' . $contaRefOrigem . '|' . $data . '|-' . $valor . '|' . $obs . '|TRB|' . microtime(true));
+            $stMov->execute([
+                ':banco_fk'   => $bancoOrigemId,
+                ':conta_ref'  => $contaRefOrigem,
+                ':data'       => $data,
+                ':descricao'  => mb_substr('TRANSFERENCIA SAIDA - ' . $obs, 0, 255),
+                ':valor'      => -$valor,
+                ':saldo_apos' => $saldoNovoOrigem,
+                ':tipo'       => 'DEBITO',
+                ':hash'       => $hashOrigem,
+            ]);
+            $movOrigemId = (int)$pdo->lastInsertId();
 
-        $hashDestino = hash('sha256', $bancoDestinoId . '|' . $contaRefDestino . '|' . $data . '|' . $valor . '|' . $obsDestino . '|TRB|' . microtime(true));
-        $stMov->execute([
-            ':banco_fk'   => $bancoDestinoId,
-            ':conta_ref'  => $contaRefDestino,
-            ':data'       => $data,
-            ':descricao'  => mb_substr('TRANSFERENCIA ENTRADA - ' . $obsDestino, 0, 255),
-            ':valor'      => $valor,
-            ':saldo_apos' => $saldoNovoDestino,
-            ':tipo'       => 'CREDITO',
-            ':hash'       => $hashDestino,
-        ]);
-        $movDestinoId = (int)$pdo->lastInsertId();
+            $hashDestino = hash('sha256', $bancoDestinoId . '|' . $contaRefDestino . '|' . $data . '|' . $valor . '|' . $obsDestino . '|TRB|' . microtime(true));
+            $stMov->execute([
+                ':banco_fk'   => $bancoDestinoId,
+                ':conta_ref'  => $contaRefDestino,
+                ':data'       => $data,
+                ':descricao'  => mb_substr('TRANSFERENCIA ENTRADA - ' . $obsDestino, 0, 255),
+                ':valor'      => $valor,
+                ':saldo_apos' => $saldoNovoDestino,
+                ':tipo'       => 'CREDITO',
+                ':hash'       => $hashDestino,
+            ]);
+            $movDestinoId = (int)$pdo->lastInsertId();
+        }
 
         // Registro mestre da transferência
         $stTrb = $pdo->prepare("
