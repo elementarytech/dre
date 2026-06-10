@@ -343,6 +343,8 @@ try {
                 m.COM_SALDO_APOS,
                 m.COM_STATUS,
                 m.COM_CONCILIADO,
+                m.COM_NATUREZA,
+                m.COM_DOCUMENTO_CONTRAPARTE,
                 b.BAN_APELIDO,
                 b.BAN_NOME
             FROM tb_conciliacao_ofx_movimento m
@@ -387,14 +389,16 @@ try {
         $movimentos = [];
         while ($r = $st->fetch(PDO::FETCH_ASSOC)) {
             $movimentos[] = [
-                'id' => (int)$r['COM_CODIGO_PK'],
-                'data_br' => (string)$r['data_br'],
-                'descricao' => (string)$r['COM_DESCRICAO'],
-                'valor' => (float)$r['COM_VALOR'],
-                'saldo_apos' => (float)$r['COM_SALDO_APOS'],
-                'status' => (string)$r['COM_STATUS'],
-                'conciliado' => (string)$r['COM_CONCILIADO'],
-                'banco_nome' => (string)($r['BAN_APELIDO'] ?: $r['BAN_NOME']),
+                'id'              => (int)$r['COM_CODIGO_PK'],
+                'data_br'         => (string)$r['data_br'],
+                'descricao'       => (string)$r['COM_DESCRICAO'],
+                'valor'           => (float)$r['COM_VALOR'],
+                'saldo_apos'      => (float)$r['COM_SALDO_APOS'],
+                'status'          => (string)$r['COM_STATUS'],
+                'conciliado'      => (string)$r['COM_CONCILIADO'],
+                'natureza'        => (string)($r['COM_NATUREZA'] ?? 'NORMAL'),
+                'doc_contraparte' => (string)($r['COM_DOCUMENTO_CONTRAPARTE'] ?? ''),
+                'banco_nome'      => (string)($r['BAN_APELIDO'] ?: $r['BAN_NOME']),
             ];
         }
 
@@ -1008,6 +1012,8 @@ try {
                 COM_VALOR,
                 COM_SALDO_APOS,
                 COM_TIPO,
+                COM_NATUREZA,
+                COM_DOCUMENTO_CONTRAPARTE,
                 COM_HASH,
                 COM_STATUS,
                 COM_CONCILIADO
@@ -1021,30 +1027,82 @@ try {
                 :valor,
                 :saldo_apos,
                 :tipo,
+                :natureza,
+                :doc_contraparte,
                 :hash,
                 'IMPORTADO',
                 'NAO'
             )
         ");
 
+        // Pré-carrega documentos e nomes do grupo (Fase C — detecção de natureza)
+        $stGrupo = $pdo->query("SELECT GDO_DOCUMENTO, GDO_NOME FROM tb_grupo_documento WHERE GDO_STATUS = 'ATIVO'");
+        $docsGrupo = [];
+        $nomesGrupo = [];
+        foreach ($stGrupo->fetchAll(PDO::FETCH_ASSOC) as $g) {
+            $docsGrupo[(string)$g['GDO_DOCUMENTO']] = true;
+            $nome = trim(mb_strtoupper((string)$g['GDO_NOME'], 'UTF-8'));
+            // Só considera nomes com 5+ caracteres pra evitar falsos positivos
+            if (mb_strlen($nome) >= 5) {
+                $nomesGrupo[] = $nome;
+            }
+        }
+
+        // Regex de CNPJ/CPF com proteção contra falso positivo em FITID do BB
+        // (FITID do BB pode ter pontos, ex: 11.848.430.597.722 — lookbehind impede confusão)
+        $cnpjCpfPattern = '/(?:'
+            . '\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}'   // CNPJ formatado
+            . '|\d{3}\.\d{3}\.\d{3}-\d{2}'         // CPF formatado
+            . '|(?<![\d.])\d{14}(?![\d.])'         // CNPJ só dígitos (14)
+            . '|(?<![\d.])\d{11}(?![\d.])'         // CPF só dígitos (11)
+            . ')/';
+
         foreach ($movimentos as $bloco) {
             preg_match('/<DTPOSTED>([^\r\n<]+)/i', $bloco, $mData);
             preg_match('/<TRNAMT>([^\r\n<]+)/i', $bloco, $mValor);
-            preg_match('/<MEMO>([^\r\n<]+)/i', $bloco, $mMemo);
+            preg_match('/<MEMO>([^<]*)/i', $bloco, $mMemo);     // [^<]* aceita MEMO vazio
+            preg_match('/<NAME>([^<]*)/i', $bloco, $mName);     // BB usa NAME pra categoria
             preg_match('/<FITID>([^\r\n<]+)/i', $bloco, $mFitid);
+            preg_match('/<TRNTYPE>([^\r\n<]+)/i', $bloco, $mTipoOfx);
 
             $dataBruta = trim((string)($mData[1] ?? ''));
-            $valor = (float)trim((string)($mValor[1] ?? 0));
-            $descricao = trim((string)($mMemo[1] ?? 'Movimento OFX'));
+            $valor     = (float)trim((string)($mValor[1] ?? 0));
+            $memoCru   = trim((string)($mMemo[1] ?? ''));
+            $nameCru   = trim((string)($mName[1] ?? ''));
+            $trnType   = strtoupper(trim((string)($mTipoOfx[1] ?? '')));
             $documento = trim((string)($mFitid[1] ?? ''));
 
             if (strlen($dataBruta) < 8) {
                 continue;
             }
 
+            // Descrição final combina NAME e MEMO. BB usa NAME pra categoria;
+            // Itaú/BTG joga tudo no MEMO (NAME geralmente ausente).
+            if ($nameCru !== '' && $memoCru !== '') {
+                $descricao = $nameCru . ' · ' . $memoCru;
+            } elseif ($nameCru !== '') {
+                $descricao = $nameCru;
+            } elseif ($memoCru !== '') {
+                $descricao = $memoCru;
+            } else {
+                $descricao = 'Movimento OFX';
+            }
+
+            // Filtra linhas de saldo: olha NAME (BB) e MEMO (Itaú)
             $descNorm = mb_strtoupper($descricao, 'UTF-8');
-            if (preg_match('/^SALDO\s+(ANTERIOR|TOTAL|EM\s+CONTA|DISPON[IÍ]VEL|DO\s+DIA|FINAL|INICIAL)/u', $descNorm)
-                || $descNorm === 'SALDO') {
+            $nameNorm = mb_strtoupper($nameCru, 'UTF-8');
+            $memoNorm = mb_strtoupper($memoCru, 'UTF-8');
+
+            $padraoSaldo = '/^SALDO\s+(ANTERIOR|TOTAL|EM\s+CONTA|DISPON[IÍ]VEL|DO\s+DIA|FINAL|INICIAL)/u';
+            if (preg_match($padraoSaldo, $memoNorm)
+                || preg_match($padraoSaldo, $nameNorm)
+                || $memoNorm === 'SALDO'
+                || $nameNorm === 'SALDO ANTERIOR'
+                || $nameNorm === 'SALDO DO DIA') {
+                continue;
+            }
+            // Também ignora movimentos com valor zero E categoria de saldo
+            if (abs($valor) < 0.005 && (str_contains($nameNorm, 'SALDO') || str_contains($memoNorm, 'SALDO'))) {
                 continue;
             }
 
@@ -1071,17 +1129,68 @@ try {
                 $tipo = 'DEBITO';
             }
 
+            // ========== Detecção de natureza ==========
+            $natureza = 'NORMAL';
+            $docContraparte = null;
+
+            // 1) Por documento (CNPJ/CPF formatado OU sem formatação)
+            if (preg_match($cnpjCpfPattern, $descricao, $mDoc)) {
+                $docLimpo = preg_replace('/\D+/', '', $mDoc[0]);
+                if (in_array(strlen($docLimpo), [11, 14], true)) {
+                    $docContraparte = $docLimpo;
+                    if (isset($docsGrupo[$docLimpo])) {
+                        $natureza = 'TRANSFERENCIA_INTERNA';
+                    }
+                }
+            }
+
+            // 2) Por nome (só pra PIX/TED/DOC, quando documento não veio)
+            if ($natureza === 'NORMAL' && $nameCru !== ''
+                && preg_match('/PIX|TED|DOC|TRANSFER/iu', $nameCru)) {
+                foreach ($nomesGrupo as $nomeGrupo) {
+                    if (mb_stripos($descricao, $nomeGrupo) !== false) {
+                        $natureza = 'TRANSFERENCIA_INTERNA';
+                        break;
+                    }
+                }
+            }
+
+            // 3) Aplicação automática do mesmo banco (Rende Fácil, MaxiInvest, etc.)
+            if ($natureza === 'NORMAL') {
+                $padraoAplicacao = '/RENDE\s+F[AÁ]CIL|APLIC(A[CÇ][AÃ]O)?\s+AUT|RESGATE\s+AUT|MAXI\s*INVEST|EASY\s*INVEST|FUNDO\s+AUTOM|CDB\s+AUT/iu';
+                if (preg_match($padraoAplicacao, $nameCru) || preg_match($padraoAplicacao, $descricao)) {
+                    $natureza = 'APLICACAO';
+                }
+            }
+
+            // 4) Rendimento de aplicação (juros pagos)
+            if ($natureza === 'NORMAL') {
+                if (preg_match('/REND(IMENTO)?\s+PAGO\s+APLIC|REND(IMENTOS)?\s+POUPAN/iu', $descricao . ' ' . $nameCru)) {
+                    $natureza = 'RENDIMENTO';
+                }
+            }
+
+            // 5) Tarifa bancária
+            if ($natureza === 'NORMAL') {
+                if (preg_match('/TARIFA|D[EÉ]BITO\s+SERVI[CÇ]O|IOF|TX\s+ANUIDADE|TAR\.?\s+AGRUPADAS/iu', $descricao . ' ' . $nameCru)) {
+                    $natureza = 'TARIFA';
+                }
+            }
+            // ========== Fim detecção ==========
+
             $stMov->execute([
-                ':importacao_fk' => $importacaoFk,
-                ':banco_fk' => $bancoFk,
-                ':conta_ref' => $contaRef,
-                ':data_movimento' => $dataSql,
-                ':documento' => $documento,
-                ':descricao' => mb_substr($descricao, 0, 255),
-                ':valor' => $valor,
-                ':saldo_apos' => $saldoAtual,
-                ':tipo' => $tipo,
-                ':hash' => $hashFingerprint,
+                ':importacao_fk'   => $importacaoFk,
+                ':banco_fk'        => $bancoFk,
+                ':conta_ref'       => $contaRef,
+                ':data_movimento'  => $dataSql,
+                ':documento'       => $documento,
+                ':descricao'       => mb_substr($descricao, 0, 255),
+                ':valor'           => $valor,
+                ':saldo_apos'      => $saldoAtual,
+                ':tipo'            => $tipo,
+                ':natureza'        => $natureza,
+                ':doc_contraparte' => $docContraparte,
+                ':hash'            => $hashFingerprint,
             ]);
 
             $incluidos++;
@@ -1153,6 +1262,7 @@ try {
               AND m.COM_CONTA_REF = :conta
               AND m.COM_TIPO = 'DEBITO'
               AND COALESCE(m.COM_CONCILIADO, 'NAO') <> 'SIM'
+              AND m.COM_NATUREZA NOT IN ('TRANSFERENCIA_INTERNA','APLICACAO','TARIFA','RENDIMENTO')
             ORDER BY m.COM_DATA_MOVIMENTO ASC, m.COM_CODIGO_PK ASC
         ");
         $stMov->execute([':banco' => $impBanco, ':conta' => $impConta]);
@@ -1494,6 +1604,7 @@ try {
               AND m.COM_CONTA_REF = :conta
               AND m.COM_TIPO = 'CREDITO'
               AND COALESCE(m.COM_CONCILIADO, 'NAO') <> 'SIM'
+              AND m.COM_NATUREZA NOT IN ('TRANSFERENCIA_INTERNA','APLICACAO','TARIFA','RENDIMENTO')
             ORDER BY m.COM_DATA_MOVIMENTO ASC, m.COM_CODIGO_PK ASC
         ");
         $stMov->execute([':banco' => $impBanco, ':conta' => $impConta]);
@@ -2223,6 +2334,200 @@ try {
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
             json_out(['ok' => false, 'msg' => 'Falha na exclusão: ' . $e->getMessage()], 500);
+        }
+    }
+
+    // ============================================================
+    // TRANSFERÊNCIAS INTERNAS / NATUREZA DOS MOVIMENTOS OFX
+    // (Briefing consolidado 2026-06-09)
+    // ============================================================
+
+    if ($acao === 'detectar_pares_transferencia') {
+        // Casa débito (saída) em banco A com crédito (entrada) em banco B,
+        // ambos marcados como TRANSFERENCIA_INTERNA, com mesmo valor (±1 ct)
+        // e datas dentro de ±1 dia. Cria 1 par ATIVO em tb_transferencia_interna.
+        $pdo->beginTransaction();
+        try {
+            $stSaidas = $pdo->query("
+                SELECT m.COM_CODIGO_PK, m.COM_BANCO_FK, m.COM_DATA_MOVIMENTO,
+                       m.COM_VALOR, m.COM_DOCUMENTO_CONTRAPARTE
+                FROM tb_conciliacao_ofx_movimento m
+                WHERE m.COM_TIPO = 'DEBITO'
+                  AND m.COM_NATUREZA = 'TRANSFERENCIA_INTERNA'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM tb_transferencia_interna t
+                      WHERE t.TFI_MOV_ORIGEM_FK = m.COM_CODIGO_PK AND t.TFI_STATUS = 'ATIVO'
+                  )
+            ");
+            $saidas = $stSaidas->fetchAll(PDO::FETCH_ASSOC);
+
+            $stEntrada = $pdo->prepare("
+                SELECT m.COM_CODIGO_PK
+                FROM tb_conciliacao_ofx_movimento m
+                WHERE m.COM_TIPO = 'CREDITO'
+                  AND m.COM_NATUREZA = 'TRANSFERENCIA_INTERNA'
+                  AND m.COM_BANCO_FK <> :banco_origem
+                  AND ABS(ABS(m.COM_VALOR) - :valor) < 0.01
+                  AND ABS(DATEDIFF(m.COM_DATA_MOVIMENTO, :data)) <= 1
+                  AND NOT EXISTS (
+                      SELECT 1 FROM tb_transferencia_interna t
+                      WHERE t.TFI_MOV_DESTINO_FK = m.COM_CODIGO_PK AND t.TFI_STATUS = 'ATIVO'
+                  )
+                LIMIT 1
+            ");
+
+            $stIns = $pdo->prepare("
+                INSERT INTO tb_transferencia_interna
+                    (TFI_MOV_ORIGEM_FK, TFI_MOV_DESTINO_FK, TFI_VALOR, TFI_MODO_DETECCAO, TFI_USUARIO)
+                VALUES (?, ?, ?, 'AUTOMATICO', ?)
+            ");
+
+            $usuario = (string)($_SESSION['user_nome'] ?? $_SESSION['usuarioSession'] ?? 'Sistema');
+            $criados = 0;
+
+            foreach ($saidas as $s) {
+                $stEntrada->execute([
+                    ':banco_origem' => $s['COM_BANCO_FK'],
+                    ':valor' => abs((float)$s['COM_VALOR']),
+                    ':data' => $s['COM_DATA_MOVIMENTO'],
+                ]);
+                $destino = $stEntrada->fetch(PDO::FETCH_ASSOC);
+                if (!$destino) continue;
+
+                $stIns->execute([
+                    $s['COM_CODIGO_PK'],
+                    $destino['COM_CODIGO_PK'],
+                    abs((float)$s['COM_VALOR']),
+                    $usuario,
+                ]);
+                $criados++;
+            }
+
+            $pdo->commit();
+            json_out(['ok' => true, 'pares_criados' => $criados]);
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            json_out(['ok' => false, 'msg' => 'Falha: ' . $e->getMessage()], 500);
+        }
+    }
+
+    if ($acao === 'listar_transferencias_internas') {
+        $st = $pdo->query("
+            SELECT t.TFI_CODIGO_PK AS id,
+                   t.TFI_VALOR AS valor,
+                   DATE_FORMAT(t.TFI_DATA_DETECCAO, '%d/%m/%Y %H:%i') AS data_deteccao,
+                   t.TFI_MODO_DETECCAO AS modo,
+                   mo.COM_CODIGO_PK AS origem_id,
+                   DATE_FORMAT(mo.COM_DATA_MOVIMENTO, '%d/%m/%Y') AS origem_data,
+                   mo.COM_DESCRICAO AS origem_desc,
+                   bo.BAN_APELIDO AS origem_banco,
+                   md.COM_CODIGO_PK AS destino_id,
+                   DATE_FORMAT(md.COM_DATA_MOVIMENTO, '%d/%m/%Y') AS destino_data,
+                   md.COM_DESCRICAO AS destino_desc,
+                   bd.BAN_APELIDO AS destino_banco
+            FROM tb_transferencia_interna t
+            INNER JOIN tb_conciliacao_ofx_movimento mo ON mo.COM_CODIGO_PK = t.TFI_MOV_ORIGEM_FK
+            INNER JOIN tb_conciliacao_ofx_movimento md ON md.COM_CODIGO_PK = t.TFI_MOV_DESTINO_FK
+            LEFT JOIN tb_banco bo ON bo.BAN_ID = mo.COM_BANCO_FK
+            LEFT JOIN tb_banco bd ON bd.BAN_ID = md.COM_BANCO_FK
+            WHERE t.TFI_STATUS = 'ATIVO'
+            ORDER BY t.TFI_DATA_DETECCAO DESC
+            LIMIT 200
+        ");
+        json_out(['ok' => true, 'rows' => $st->fetchAll(PDO::FETCH_ASSOC)]);
+    }
+
+    if ($acao === 'listar_transferencias_sem_par') {
+        $st = $pdo->query("
+            SELECT m.COM_CODIGO_PK AS id,
+                   DATE_FORMAT(m.COM_DATA_MOVIMENTO, '%d/%m/%Y') AS data,
+                   m.COM_VALOR AS valor,
+                   m.COM_DESCRICAO AS descricao,
+                   m.COM_TIPO AS tipo,
+                   b.BAN_APELIDO AS banco,
+                   m.COM_DOCUMENTO_CONTRAPARTE AS doc_contraparte
+            FROM tb_conciliacao_ofx_movimento m
+            LEFT JOIN tb_banco b ON b.BAN_ID = m.COM_BANCO_FK
+            WHERE m.COM_NATUREZA = 'TRANSFERENCIA_INTERNA'
+              AND NOT EXISTS (
+                SELECT 1 FROM tb_transferencia_interna t
+                WHERE (t.TFI_MOV_ORIGEM_FK = m.COM_CODIGO_PK OR t.TFI_MOV_DESTINO_FK = m.COM_CODIGO_PK)
+                  AND t.TFI_STATUS = 'ATIVO'
+              )
+            ORDER BY m.COM_DATA_MOVIMENTO DESC, m.COM_CODIGO_PK DESC
+            LIMIT 200
+        ");
+        json_out(['ok' => true, 'rows' => $st->fetchAll(PDO::FETCH_ASSOC)]);
+    }
+
+    if ($acao === 'alterar_natureza_movimento') {
+        $movId    = (int)($_POST['movimento_fk'] ?? 0);
+        $natureza = strtoupper((string)($_POST['natureza'] ?? 'NORMAL'));
+        $valid    = ['NORMAL','TRANSFERENCIA_INTERNA','APLICACAO','RENDIMENTO','TARIFA'];
+        if ($movId <= 0) json_out(['ok' => false, 'msg' => 'ID inválido.'], 422);
+        if (!in_array($natureza, $valid, true)) {
+            json_out(['ok' => false, 'msg' => 'Natureza inválida.'], 422);
+        }
+        $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento SET COM_NATUREZA = ? WHERE COM_CODIGO_PK = ?")
+            ->execute([$natureza, $movId]);
+
+        // Se voltou para NORMAL, cancela par associado (se houver)
+        if ($natureza === 'NORMAL') {
+            $pdo->prepare("UPDATE tb_transferencia_interna
+                           SET TFI_STATUS = 'CANCELADO'
+                           WHERE (TFI_MOV_ORIGEM_FK = ? OR TFI_MOV_DESTINO_FK = ?)
+                             AND TFI_STATUS = 'ATIVO'")
+                ->execute([$movId, $movId]);
+        }
+        json_out(['ok' => true]);
+    }
+
+    if ($acao === 'vincular_par_manual') {
+        $origemId  = (int)($_POST['origem_id'] ?? 0);
+        $destinoId = (int)($_POST['destino_id'] ?? 0);
+        if ($origemId <= 0 || $destinoId <= 0 || $origemId === $destinoId) {
+            json_out(['ok' => false, 'msg' => 'IDs inválidos.'], 422);
+        }
+
+        $stV = $pdo->prepare("SELECT COM_CODIGO_PK, COM_TIPO, COM_VALOR, COM_NATUREZA, COM_BANCO_FK
+                              FROM tb_conciliacao_ofx_movimento
+                              WHERE COM_CODIGO_PK IN (?, ?)");
+        $stV->execute([$origemId, $destinoId]);
+        $rows = $stV->fetchAll(PDO::FETCH_ASSOC);
+        if (count($rows) !== 2) json_out(['ok' => false, 'msg' => 'Movimentos não encontrados.'], 404);
+
+        $origem  = ((int)$rows[0]['COM_CODIGO_PK'] === $origemId)  ? $rows[0] : $rows[1];
+        $destino = ((int)$rows[0]['COM_CODIGO_PK'] === $destinoId) ? $rows[0] : $rows[1];
+
+        if (strtoupper((string)$origem['COM_TIPO']) !== 'DEBITO' || strtoupper((string)$destino['COM_TIPO']) !== 'CREDITO') {
+            json_out(['ok' => false, 'msg' => 'Origem deve ser DÉBITO, destino deve ser CRÉDITO.'], 422);
+        }
+        if ((int)$origem['COM_BANCO_FK'] === (int)$destino['COM_BANCO_FK']) {
+            json_out(['ok' => false, 'msg' => 'Origem e destino devem ser bancos diferentes.'], 422);
+        }
+        if (abs(abs((float)$origem['COM_VALOR']) - (float)$destino['COM_VALOR']) > 0.01) {
+            json_out(['ok' => false, 'msg' => 'Valores não batem entre origem e destino.'], 422);
+        }
+
+        $usuario = (string)($_SESSION['user_nome'] ?? $_SESSION['usuarioSession'] ?? 'Sistema');
+
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento
+                           SET COM_NATUREZA = 'TRANSFERENCIA_INTERNA'
+                           WHERE COM_CODIGO_PK IN (?, ?)")
+                ->execute([$origemId, $destinoId]);
+
+            $pdo->prepare("
+                INSERT INTO tb_transferencia_interna
+                    (TFI_MOV_ORIGEM_FK, TFI_MOV_DESTINO_FK, TFI_VALOR, TFI_MODO_DETECCAO, TFI_USUARIO)
+                VALUES (?, ?, ?, 'MANUAL', ?)
+            ")->execute([$origemId, $destinoId, abs((float)$origem['COM_VALOR']), $usuario]);
+            $pdo->commit();
+            json_out(['ok' => true, 'msg' => 'Par vinculado.']);
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            json_out(['ok' => false, 'msg' => 'Falha: ' . $e->getMessage()], 500);
         }
     }
 

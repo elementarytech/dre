@@ -647,6 +647,9 @@ $hojeTopo = date('d/m/Y');
                             <button type="button" class="btn btn-sm btn-outline-danger" id="btnHistoricoOfx" title="Histórico de importações OFX — permite excluir importação errada com reversão completa (requer senha ADMIN)">
                                 <i class="bi bi-clock-history me-1"></i>Histórico OFX
                             </button>
+                            <button type="button" class="btn btn-sm btn-outline-info" id="btnTransferenciasInternas" title="Pares de transferência entre contas próprias + cadastro de CNPJs/CPFs do grupo">
+                                <i class="bi bi-arrow-left-right me-1"></i>Transferências internas
+                            </button>
                             <div class="segmented" role="tablist">
                                 <button type="button" id="tabOfxBtn" role="tab" aria-selected="true" aria-controls="tabOfx" class="active"><i class="bi bi-file-earmark-text me-1"></i>Conciliação (OFX)</button>
                                 <button type="button" id="tabCnabBtn" role="tab" aria-selected="false" aria-controls="tabCnab"><i class="bi bi-file-binary me-1"></i>CNAB</button>
@@ -1104,6 +1107,97 @@ $hojeTopo = date('d/m/Y');
         </div>
     </div>
 
+    <!-- Modal: Transferências internas + cadastro de docs do grupo -->
+    <div class="modal fade" id="modalTransferenciasInternas" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content" style="border:0;border-radius:14px;overflow:hidden">
+                <div class="modal-header" style="background:#0ea5e9;color:#fff">
+                    <h5 class="modal-title fw-bold mb-0">
+                        <i class="bi bi-arrow-left-right me-2"></i>Transferências entre contas próprias
+                    </h5>
+                    <button class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+                <div class="modal-body" style="background:#f8fafc">
+                    <ul class="nav nav-tabs" role="tablist">
+                        <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#abaPares">Pares casados</a></li>
+                        <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#abaSemPar">Sem par</a></li>
+                        <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#abaDocs">CNPJs/CPFs do grupo</a></li>
+                    </ul>
+                    <div class="tab-content pt-3">
+                        <div class="tab-pane fade show active" id="abaPares" role="tabpanel">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <p class="small text-muted mb-0">Débitos e créditos casados entre bancos diferentes com mesmo valor e datas próximas.</p>
+                                <button class="btn btn-sm btn-warning" id="btnRodarDeteccao">
+                                    <i class="bi bi-arrow-clockwise me-1"></i>Rodar detecção agora
+                                </button>
+                            </div>
+                            <div class="table-responsive border rounded bg-white">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Origem (saída)</th>
+                                            <th>Destino (entrada)</th>
+                                            <th class="text-end">Valor</th>
+                                            <th>Modo</th>
+                                            <th>Detectado em</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tiPares">
+                                        <tr><td colspan="5" class="text-muted small text-center py-3">Carregando…</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="tab-pane fade" id="abaSemPar" role="tabpanel">
+                            <p class="small text-muted">Movimentos marcados como transferência interna (CNPJ/nome do grupo no MEMO) que ainda não casaram com um par no outro banco.</p>
+                            <div class="table-responsive border rounded bg-white">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Banco</th>
+                                            <th>Data</th>
+                                            <th>Descrição</th>
+                                            <th>Tipo</th>
+                                            <th class="text-end">Valor</th>
+                                            <th>Ação</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tiSemPar">
+                                        <tr><td colspan="6" class="text-muted small text-center py-3">Carregando…</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="tab-pane fade" id="abaDocs" role="tabpanel">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <p class="small text-muted mb-0">CNPJs/CPFs cadastrados como "do grupo". Movimentos com esses documentos no MEMO são marcados como transferência interna automaticamente.</p>
+                                <a href="grupo_documentos.php" class="btn btn-sm btn-primary"><i class="bi bi-pencil me-1"></i>Gerenciar cadastro</a>
+                            </div>
+                            <div class="table-responsive border rounded bg-white">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Tipo</th>
+                                            <th>Documento</th>
+                                            <th>Nome</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tiDocs">
+                                        <tr><td colspan="4" class="text-muted small text-center py-3">Carregando…</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal: Histórico de Importações OFX -->
     <div class="modal fade" id="modalHistoricoOfx" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
@@ -1473,11 +1567,21 @@ $hojeTopo = date('d/m/Y');
             j.movimentos.forEach(r => {
                 const valor = Number(r.valor || 0);
                 const isOut = valor < 0;
+                // Badge de natureza (Fase H do Briefing 2026-06-09)
+                const natBadge = (r.natureza === 'TRANSFERENCIA_INTERNA')
+                    ? '<span class="badge ms-1" style="background:rgba(14,165,233,.12);color:#0c4a6e">Transf. interna</span>'
+                    : (r.natureza === 'APLICACAO')
+                    ? '<span class="badge ms-1" style="background:rgba(245,158,11,.15);color:#92400e">Aplicação</span>'
+                    : (r.natureza === 'RENDIMENTO')
+                    ? '<span class="badge ms-1" style="background:rgba(34,197,94,.12);color:#14532d">Rendimento</span>'
+                    : (r.natureza === 'TARIFA')
+                    ? '<span class="badge ms-1" style="background:rgba(100,116,139,.15);color:#475569">Tarifa</span>'
+                    : '';
                 tbody.innerHTML += `
             <tr style="${r.status === 'CONCILIADO' ? 'opacity:.6' : ''}">
                 <td class="mono small">${r.data_br}</td>
                 <td class="fw-semibold small">${r.banco_nome}</td>
-                <td><span class="truncate" title="${r.descricao}">${r.descricao}</span></td>
+                <td><span class="truncate" title="${r.descricao}">${r.descricao}</span>${natBadge}</td>
                 <td class="text-end mono small ${isOut ? 'text-danger' : 'text-success'}">${isOut ? '−' : '+'}R$ ${money(Math.abs(valor))}</td>
                 <td class="text-end mono small">R$ ${money(r.saldo_apos)}</td>
                 <td>${badgeExtrato(r.status, r.conciliado)}</td>
@@ -3427,6 +3531,177 @@ $hojeTopo = date('d/m/Y');
             const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalHistoricoOfx'));
             modal.show();
             carregarHistoricoOfx();
+        });
+
+        // ====== Botão "Transferências internas" + 3 abas ======
+        async function carregarParesTransferencia() {
+            const tb = document.getElementById('tiPares');
+            tb.innerHTML = '<tr><td colspan="5" class="text-muted small text-center py-3">Carregando…</td></tr>';
+            try {
+                const r = await fetch(endpoint + '?acao=listar_transferencias_internas', { credentials: 'same-origin' });
+                const j = await r.json();
+                if (!j.ok) {
+                    tb.innerHTML = '<tr><td colspan="5" class="text-danger small text-center py-3">' + (j.msg || 'Erro') + '</td></tr>';
+                    return;
+                }
+                const rows = j.rows || [];
+                if (!rows.length) {
+                    tb.innerHTML = '<tr><td colspan="5" class="text-muted small text-center py-3">Nenhum par detectado ainda. Clique em "Rodar detecção agora".</td></tr>';
+                    return;
+                }
+                const brl = v => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+                const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+                tb.innerHTML = rows.map(r => `
+                    <tr>
+                        <td class="small">
+                            <div class="fw-semibold">${esc(r.origem_banco || '—')}</div>
+                            <div class="text-muted" style="font-size:.72rem">${esc(r.origem_data)} • ${esc((r.origem_desc || '').slice(0, 60))}</div>
+                        </td>
+                        <td class="small">
+                            <div class="fw-semibold">${esc(r.destino_banco || '—')}</div>
+                            <div class="text-muted" style="font-size:.72rem">${esc(r.destino_data)} • ${esc((r.destino_desc || '').slice(0, 60))}</div>
+                        </td>
+                        <td class="text-end mono fw-semibold">${brl(r.valor)}</td>
+                        <td><span class="badge ${r.modo === 'MANUAL' ? 'bg-info-subtle text-info' : 'bg-success-subtle text-success'}">${esc(r.modo)}</span></td>
+                        <td class="small text-muted">${esc(r.data_deteccao)}</td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                tb.innerHTML = '<tr><td colspan="5" class="text-danger small text-center py-3">Erro de rede</td></tr>';
+            }
+        }
+
+        async function carregarSemPar() {
+            const tb = document.getElementById('tiSemPar');
+            tb.innerHTML = '<tr><td colspan="6" class="text-muted small text-center py-3">Carregando…</td></tr>';
+            try {
+                const r = await fetch(endpoint + '?acao=listar_transferencias_sem_par', { credentials: 'same-origin' });
+                const j = await r.json();
+                if (!j.ok) {
+                    tb.innerHTML = '<tr><td colspan="6" class="text-danger small text-center py-3">' + (j.msg || 'Erro') + '</td></tr>';
+                    return;
+                }
+                const rows = j.rows || [];
+                if (!rows.length) {
+                    tb.innerHTML = '<tr><td colspan="6" class="text-muted small text-center py-3">Tudo casado. Sem movimentos órfãos.</td></tr>';
+                    return;
+                }
+                const brl = v => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+                const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+                tb.innerHTML = rows.map(r => `
+                    <tr>
+                        <td class="small">${esc(r.banco || '—')}</td>
+                        <td class="small">${esc(r.data)}</td>
+                        <td class="small">${esc((r.descricao || '').slice(0, 70))}</td>
+                        <td><span class="badge ${r.tipo === 'DEBITO' ? 'bg-danger-subtle text-danger' : 'bg-success-subtle text-success'}">${esc(r.tipo)}</span></td>
+                        <td class="text-end mono">${brl(Math.abs(r.valor))}</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="desmarcarTransferencia(${Number(r.id)})" title="Marcar como NORMAL (sai da lista de transferências internas)">
+                                <i class="bi bi-x-circle"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                tb.innerHTML = '<tr><td colspan="6" class="text-danger small text-center py-3">Erro de rede</td></tr>';
+            }
+        }
+
+        async function carregarDocsGrupo() {
+            const tb = document.getElementById('tiDocs');
+            tb.innerHTML = '<tr><td colspan="4" class="text-muted small text-center py-3">Carregando…</td></tr>';
+            try {
+                const r = await fetch('endpoints/grupo_documentos.php?acao=listar', { credentials: 'same-origin' });
+                const j = await r.json();
+                if (!j.ok) {
+                    tb.innerHTML = '<tr><td colspan="4" class="text-danger small text-center py-3">' + (j.msg || 'Erro') + '</td></tr>';
+                    return;
+                }
+                const rows = j.rows || [];
+                if (!rows.length) {
+                    tb.innerHTML = '<tr><td colspan="4" class="text-muted small text-center py-3">Nenhum documento cadastrado.</td></tr>';
+                    return;
+                }
+                const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+                const fmtDoc = (d, t) => {
+                    const x = String(d).replace(/\D/g, '');
+                    if (t === 'PJ' && x.length === 14) return x.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+                    if (t === 'PF' && x.length === 11) return x.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+                    return d;
+                };
+                tb.innerHTML = rows.map(r => `
+                    <tr ${r.GDO_STATUS === 'INATIVO' ? 'class="text-muted"' : ''}>
+                        <td><span class="badge ${r.GDO_TIPO === 'PJ' ? 'bg-primary-subtle text-primary' : 'bg-warning-subtle text-warning-emphasis'}">${esc(r.GDO_TIPO)}</span></td>
+                        <td class="mono small">${esc(fmtDoc(r.GDO_DOCUMENTO, r.GDO_TIPO))}</td>
+                        <td class="small">${esc(r.GDO_NOME)}</td>
+                        <td>${r.GDO_STATUS === 'ATIVO'
+                            ? '<span class="badge bg-success-subtle text-success">Ativo</span>'
+                            : '<span class="badge bg-secondary-subtle text-secondary">Inativo</span>'}</td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                tb.innerHTML = '<tr><td colspan="4" class="text-danger small text-center py-3">Erro de rede</td></tr>';
+            }
+        }
+
+        window.desmarcarTransferencia = async function(movId) {
+            const conf = await Swal.fire({
+                title: 'Desmarcar transferência interna?',
+                text: 'Este movimento volta a ser NORMAL e poderá ser conciliado como conta a pagar/receber normalmente.',
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonText: 'Sim, desmarcar',
+                cancelButtonText: 'Cancelar',
+            });
+            if (!conf.isConfirmed) return;
+            try {
+                const fd = new FormData();
+                fd.append('acao', 'alterar_natureza_movimento');
+                fd.append('movimento_fk', String(movId));
+                fd.append('natureza', 'NORMAL');
+                const r = await fetch(endpoint, { method: 'POST', body: fd, credentials: 'same-origin' });
+                const j = await r.json();
+                if (!j.ok) throw new Error(j.msg || 'Erro');
+                await carregarSemPar();
+            } catch (err) {
+                Swal.fire({ icon: 'error', title: 'Erro', text: err.message });
+            }
+        };
+
+        document.getElementById('btnRodarDeteccao')?.addEventListener('click', async () => {
+            const btn = document.getElementById('btnRodarDeteccao');
+            btn.disabled = true;
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Detectando…';
+            try {
+                const fd = new FormData();
+                fd.append('acao', 'detectar_pares_transferencia');
+                const r = await fetch(endpoint, { method: 'POST', body: fd, credentials: 'same-origin' });
+                const j = await r.json();
+                if (!j.ok) throw new Error(j.msg || 'Erro');
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Detecção concluída',
+                    text: `${j.pares_criados || 0} novo(s) par(es) detectado(s).`,
+                    timer: 2200,
+                    showConfirmButton: false
+                });
+                await carregarParesTransferencia();
+                await carregarSemPar();
+            } catch (err) {
+                Swal.fire({ icon: 'error', title: 'Erro', text: err.message });
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        });
+
+        document.getElementById('btnTransferenciasInternas')?.addEventListener('click', () => {
+            const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalTransferenciasInternas'));
+            modal.show();
+            carregarParesTransferencia();
+            carregarSemPar();
+            carregarDocsGrupo();
         });
 
         // ====== Botão "Conferir vínculos" (Briefing 11) ======

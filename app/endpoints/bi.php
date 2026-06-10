@@ -699,11 +699,15 @@ try {
             $b['SAIDAS_QTD']   = (int)$saiRow['qtd'];
 
             // Movimentos OFX no período (qtd total e conciliados)
+            // Considera apenas natureza NORMAL — TRANSFERENCIA_INTERNA/APLICACAO/RENDIMENTO/TARIFA
+            // são auto-categorizados e não precisam de conciliação manual, então não
+            // distorcem o KPI de "% conciliado".
             $sqlMov = "SELECT COUNT(*) AS total,
                               SUM(CASE WHEN COM_CONCILIADO = 'SIM' THEN 1 ELSE 0 END) AS conciliados
                        FROM tb_conciliacao_ofx_movimento
                        WHERE COM_BANCO_FK = ?
-                         AND COM_DATA_MOVIMENTO BETWEEN ? AND ?";
+                         AND COM_DATA_MOVIMENTO BETWEEN ? AND ?
+                         AND COM_NATUREZA = 'NORMAL'";
             $stM = $pdo->prepare($sqlMov);
             $stM->execute([$bancoFk, $dtIniSql, $dtFimSql]);
             $movRow = $stM->fetch(PDO::FETCH_ASSOC) ?: ['total' => 0, 'conciliados' => 0];
