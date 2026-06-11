@@ -1931,67 +1931,81 @@ try {
             json_out(['ok' => false, 'msg' => 'Tipo inválido.'], 422);
         }
 
+        // Detecta busca por #ID (ex.: "2950" ou "#2950"). Com texto/#ID a busca NÃO
+        // trava por valor, banco nem mês — acha o lançamento exato em qualquer período
+        // (exigindo apenas que não esteja vinculado nem cancelado). Sem texto, mantém
+        // o autocomplete por valor (comportamento original).
+        $idBusca  = preg_match('/^#?(\d+)$/', $q, $mq) ? (int)$mq[1] : 0;
+        $temTexto = ($q !== '');
+
         if ($tipo === 'PAGAR') {
-            $sql = "
-                SELECT
-                    cp.CPG_CODIGO_PK AS id,
-                    cp.CPG_VENCIMENTO AS vencimento,
-                    cp.CPG_VALOR_PARCELA AS valor,
-                    cp.CPG_DESCRICAO AS descricao,
-                    cp.CPG_DOCUMENTO AS documento,
-                    cp.CPG_STATUS AS status,
-                    cp.CPG_DATA_PAGAMENTO AS data_pagamento,
-                    cp.CPG_VALOR_PAGO AS valor_pago,
-                    cp.CPG_OFX_MOVIMENTO_FK AS ja_vinculado,
-                    cp.CPG_NUM_PARCELA AS num_parcela,
-                    cp.CPG_QTD_PARCELAS AS qtd_parcelas,
-                    f.FOR_RAZAO_SOCIAL AS fornecedor_razao,
-                    f.FOR_NOME_FANTASIA AS fornecedor_fantasia
-                FROM tb_contas_pagar cp
-                LEFT JOIN tb_fornecedor f ON f.FOR_CODIGO_PK = cp.CPG_FORNECEDOR_FK
-                WHERE cp.CPG_STATUS IN ('ABERTO','ATRASADO','PAGO')
-                  AND ABS(IFNULL(cp.CPG_VALOR_PAGO, cp.CPG_VALOR_PARCELA) - ?) < 0.50
-                  " . ($bancoFk > 0 ? "AND (cp.CPG_BANCO_PAGAMENTO_FK = ? OR cp.CPG_BANCO_PAGAMENTO_FK IS NULL)" : "") . "
-                  AND (cp.CPG_DESCRICAO LIKE ? OR cp.CPG_DOCUMENTO LIKE ? OR cp.CPG_NOTA_FISCAL LIKE ?
-                       OR f.FOR_RAZAO_SOCIAL LIKE ? OR f.FOR_NOME_FANTASIA LIKE ?)
-                  AND cp.CPG_OFX_MOVIMENTO_FK IS NULL
-                ORDER BY ABS(DATEDIFF(cp.CPG_VENCIMENTO, CURDATE())) ASC
-                LIMIT 20
-            ";
-            $params = [$valor];
-            if ($bancoFk > 0) $params[] = $bancoFk;
-            $params = array_merge($params, [$qLike, $qLike, $qLike, $qLike, $qLike]);
+            $cols = "cp.CPG_CODIGO_PK AS id,
+                     cp.CPG_VENCIMENTO AS vencimento,
+                     cp.CPG_VALOR_PARCELA AS valor,
+                     cp.CPG_DESCRICAO AS descricao,
+                     cp.CPG_DOCUMENTO AS documento,
+                     cp.CPG_STATUS AS status,
+                     cp.CPG_DATA_PAGAMENTO AS data_pagamento,
+                     cp.CPG_VALOR_PAGO AS valor_pago,
+                     cp.CPG_OFX_MOVIMENTO_FK AS ja_vinculado,
+                     cp.CPG_NUM_PARCELA AS num_parcela,
+                     cp.CPG_QTD_PARCELAS AS qtd_parcelas,
+                     f.FOR_RAZAO_SOCIAL AS fornecedor_razao,
+                     f.FOR_NOME_FANTASIA AS fornecedor_fantasia";
+            $where  = ["cp.CPG_OFX_MOVIMENTO_FK IS NULL", "UPPER(COALESCE(cp.CPG_STATUS,'')) <> 'CANCELADO'"];
+            $params = [];
+            if ($temTexto) {
+                $cond = "cp.CPG_DESCRICAO LIKE ? OR cp.CPG_DOCUMENTO LIKE ? OR cp.CPG_NOTA_FISCAL LIKE ?
+                         OR f.FOR_RAZAO_SOCIAL LIKE ? OR f.FOR_NOME_FANTASIA LIKE ?";
+                $params = [$qLike, $qLike, $qLike, $qLike, $qLike];
+                if ($idBusca > 0) { $cond = "cp.CPG_CODIGO_PK = ? OR " . $cond; array_unshift($params, $idBusca); }
+                $where[] = "($cond)";
+            } else {
+                $where[] = "cp.CPG_STATUS IN ('ABERTO','ATRASADO','PAGO')";
+                $where[] = "ABS(IFNULL(cp.CPG_VALOR_PAGO, cp.CPG_VALOR_PARCELA) - ?) < 0.50";
+                $params[] = $valor;
+                if ($bancoFk > 0) { $where[] = "(cp.CPG_BANCO_PAGAMENTO_FK = ? OR cp.CPG_BANCO_PAGAMENTO_FK IS NULL)"; $params[] = $bancoFk; }
+            }
+            $sql = "SELECT {$cols}
+                    FROM tb_contas_pagar cp
+                    LEFT JOIN tb_fornecedor f ON f.FOR_CODIGO_PK = cp.CPG_FORNECEDOR_FK
+                    WHERE " . implode("\n      AND ", $where) . "
+                    ORDER BY ABS(DATEDIFF(cp.CPG_VENCIMENTO, CURDATE())) ASC
+                    LIMIT 30";
         } else {
-            $sql = "
-                SELECT
-                    cr.CRE_ID AS id,
-                    cr.CRE_VENCIMENTO AS vencimento,
-                    cr.CRE_VALOR AS valor,
-                    cr.CRE_OBSERVACAO AS descricao,
-                    cr.CRE_DOCUMENTO AS documento,
-                    cr.CRE_STATUS AS status,
-                    cr.CRE_RECEBIDO_EM AS data_recebimento,
-                    cr.CRE_VALOR_RECEBIDO AS valor_recebido,
-                    cr.CRE_OFX_MOVIMENTO_FK AS ja_vinculado,
-                    cpa.CPA_NUM AS num_parcela,
-                    cpa.CPA_TOTAL AS qtd_parcelas,
-                    cr.CRE_CLIENTE_NOME AS cliente_nome
-                FROM tb_contas_receber cr
-                LEFT JOIN contrato_parcelas cpa
-                    ON cpa.CPA_CTR_ID = cr.CRE_CONTRATO_FK
-                   AND cpa.CPA_VENCIMENTO = cr.CRE_VENCIMENTO
-                WHERE cr.CRE_STATUS IN ('ABERTO','PROGRAMADO','PENDENTE','RECEBIDO','PAGO')
-                  AND ABS(IFNULL(cr.CRE_VALOR_RECEBIDO, cr.CRE_VALOR) - ?) < 0.50
-                  " . ($bancoFk > 0 ? "AND (cr.CRE_BANCO_FK = ? OR cr.CRE_BANCO_FK IS NULL)" : "") . "
-                  AND (cr.CRE_OBSERVACAO LIKE ? OR cr.CRE_DOCUMENTO LIKE ?
-                       OR cr.CRE_CLIENTE_NOME LIKE ?)
-                  AND cr.CRE_OFX_MOVIMENTO_FK IS NULL
-                ORDER BY ABS(DATEDIFF(cr.CRE_VENCIMENTO, CURDATE())) ASC
-                LIMIT 20
-            ";
-            $params = [$valor];
-            if ($bancoFk > 0) $params[] = $bancoFk;
-            $params = array_merge($params, [$qLike, $qLike, $qLike]);
+            $cols = "cr.CRE_ID AS id,
+                     cr.CRE_VENCIMENTO AS vencimento,
+                     cr.CRE_VALOR AS valor,
+                     cr.CRE_OBSERVACAO AS descricao,
+                     cr.CRE_DOCUMENTO AS documento,
+                     cr.CRE_STATUS AS status,
+                     cr.CRE_RECEBIDO_EM AS data_recebimento,
+                     cr.CRE_VALOR_RECEBIDO AS valor_recebido,
+                     cr.CRE_OFX_MOVIMENTO_FK AS ja_vinculado,
+                     cpa.CPA_NUM AS num_parcela,
+                     cpa.CPA_TOTAL AS qtd_parcelas,
+                     cr.CRE_CLIENTE_NOME AS cliente_nome";
+            $where  = ["cr.CRE_OFX_MOVIMENTO_FK IS NULL", "UPPER(COALESCE(cr.CRE_STATUS,'')) <> 'CANCELADO'"];
+            $params = [];
+            if ($temTexto) {
+                $cond = "cr.CRE_OBSERVACAO LIKE ? OR cr.CRE_DOCUMENTO LIKE ? OR cr.CRE_CLIENTE_NOME LIKE ?";
+                $params = [$qLike, $qLike, $qLike];
+                if ($idBusca > 0) { $cond = "cr.CRE_ID = ? OR " . $cond; array_unshift($params, $idBusca); }
+                $where[] = "($cond)";
+            } else {
+                $where[] = "cr.CRE_STATUS IN ('ABERTO','PROGRAMADO','PENDENTE','RECEBIDO','PAGO')";
+                $where[] = "ABS(IFNULL(cr.CRE_VALOR_RECEBIDO, cr.CRE_VALOR) - ?) < 0.50";
+                $params[] = $valor;
+                if ($bancoFk > 0) { $where[] = "(cr.CRE_BANCO_FK = ? OR cr.CRE_BANCO_FK IS NULL)"; $params[] = $bancoFk; }
+            }
+            $sql = "SELECT {$cols}
+                    FROM tb_contas_receber cr
+                    LEFT JOIN contrato_parcelas cpa
+                        ON cpa.CPA_CTR_ID = cr.CRE_CONTRATO_FK
+                       AND cpa.CPA_VENCIMENTO = cr.CRE_VENCIMENTO
+                    WHERE " . implode("\n      AND ", $where) . "
+                    ORDER BY ABS(DATEDIFF(cr.CRE_VENCIMENTO, CURDATE())) ASC
+                    LIMIT 30";
         }
 
         $st = $pdo->prepare($sql);

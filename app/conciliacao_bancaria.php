@@ -2019,6 +2019,57 @@ $hojeTopo = date('d/m/Y');
             return d;
         }
 
+        // Normaliza um lançamento vindo de buscar_lancamento_existente para o formato
+        // que lancOptionLabel/lancSaldoRestante/lancJaQuitada esperam.
+        function normalizarLancServidor(tipo, r) {
+            if (tipo === 'PAGAR') r.fornecedor = r.fornecedor_fantasia || r.fornecedor_razao || r.descricao || '';
+            else                  r.cliente    = r.cliente_nome || r.descricao || '';
+            return r;
+        }
+
+        // Busca lançamentos no servidor por texto/#ID, SEM travar por mês (resolve o
+        // caso de conciliar um movimento contra um lançamento de outro período).
+        async function buscarLancServidor(tipo, termo, valorMov, bancoFk) {
+            const j = await apiGet({ acao: "buscar_lancamento_existente", tipo, q: termo, valor: valorMov || 0, banco_fk: bancoFk || 0 });
+            if (!j || !j.ok || !Array.isArray(j.rows)) return [];
+            return j.rows.map(r => normalizarLancServidor(tipo, r));
+        }
+
+        // Monta um <option> do modal de alocação múltipla a partir de um lançamento.
+        function pmBuildOption(tipo, r) {
+            const label = lancOptionLabel(tipo, r);
+            const desc = (tipo === 'PAGAR') ? (r.fornecedor || r.descricao || '') : (r.cliente || r.descricao || '');
+            return `<option value="${r.id}"
+                data-saldo="${lancSaldoRestante(tipo, r)}"
+                data-total="${Number(r.valor || 0)}"
+                data-quitada="${lancJaQuitada(tipo, r) ? '1' : '0'}"
+                data-num-parcela="${r.num_parcela || ''}"
+                data-qtd-parcelas="${r.qtd_parcelas || ''}"
+                data-desc="${escapeAttr(desc)}"
+                data-search="${escapeAttr(pmNormalizar(label))}"
+                data-remote="1">${escapeHtml(label)}</option>`;
+        }
+
+        // <option> simples para os selects inline (linhas de débito/crédito pendente).
+        function inlineBuildOption(tipo, r) {
+            const lbl = lancOptionLabel(tipo, r);
+            return `<option value="${r.id}" data-search="${escapeAttr(pmNormalizar(lbl + ' #' + r.id))}" data-remote="1">${escapeHtml(lbl)}</option>`;
+        }
+
+        // Busca no servidor e injeta no select inline as options ainda não presentes,
+        // depois reaplica o filtro digitado. Usado quando o lançamento está fora do mês.
+        async function inlineBuscaRemota(tipo, inpB, sel) {
+            const termo = (inpB.value || '').trim();
+            if (termo.length < 2) return;
+            const rows = await buscarLancServidor(tipo, termo, 0, 0);
+            const novos = rows.filter(r => !sel.querySelector('option[value="' + r.id + '"]'));
+            novos.forEach(r => sel.insertAdjacentHTML('beforeend', inlineBuildOption(tipo, r)));
+            const t = pmNormalizar(inpB.value);
+            sel.querySelectorAll('option[data-search]').forEach(opt => {
+                opt.hidden = !!t && (opt.dataset.search || '').indexOf(t) < 0;
+            });
+        }
+
         async function abrirModalDebitosPendentes(importacaoFk) {
             const j = await apiGet({ acao: "debitos_orfaos", importacao_fk: importacaoFk });
             if (!j.ok) {
@@ -2165,6 +2216,7 @@ $hojeTopo = date('d/m/Y');
                 const inpB = tr.querySelector('.dp-row-vinc-busca');
                 const sel = tr.querySelector('.dp-row-vinc-fk');
                 if (!inpB || !sel) return;
+                let dpBuscaTimer = null;
                 inpB.addEventListener('input', () => {
                     const termo = pmNormalizar(inpB.value);
                     sel.querySelectorAll('option[data-search]').forEach(opt => {
@@ -2172,6 +2224,8 @@ $hojeTopo = date('d/m/Y');
                     });
                     const optSel = sel.options[sel.selectedIndex];
                     if (optSel && optSel.hidden) { sel.value = ''; sel.dispatchEvent(new Event('change')); }
+                    clearTimeout(dpBuscaTimer);
+                    dpBuscaTimer = setTimeout(() => inlineBuscaRemota('PAGAR', inpB, sel), 350);
                 });
                 // Enter seleciona a 1ª option visível
                 inpB.addEventListener('keydown', (ev) => {
@@ -2643,6 +2697,7 @@ $hojeTopo = date('d/m/Y');
                 const inpB = tr.querySelector('.cp-row-vinc-busca');
                 const sel = tr.querySelector('.cp-row-vinc-fk');
                 if (!inpB || !sel) return;
+                let cpBuscaTimer = null;
                 inpB.addEventListener('input', () => {
                     const termo = pmNormalizar(inpB.value);
                     sel.querySelectorAll('option[data-search]').forEach(opt => {
@@ -2650,6 +2705,8 @@ $hojeTopo = date('d/m/Y');
                     });
                     const optSel = sel.options[sel.selectedIndex];
                     if (optSel && optSel.hidden) { sel.value = ''; sel.dispatchEvent(new Event('change')); }
+                    clearTimeout(cpBuscaTimer);
+                    cpBuscaTimer = setTimeout(() => inlineBuscaRemota('RECEBER', inpB, sel), 350);
                 });
                 // Enter seleciona a 1ª option visível
                 inpB.addEventListener('keydown', (ev) => {
@@ -3036,7 +3093,36 @@ $hojeTopo = date('d/m/Y');
                 }
             }
             if (inpBusca) {
-                inpBusca.addEventListener('input', filtrarLancs);
+                // Fallback no servidor: busca lançamentos de QUALQUER mês por texto/#ID
+                // e injeta como options num grupo separado (resolve conciliar contra
+                // lançamento fora do mês do movimento, ex.: PIX de junho quitando #2950 de fev).
+                let buscaTimer = null;
+                async function buscaRemota() {
+                    const termo = (inpBusca.value || '').trim();
+                    if (termo.length < 2) return;
+                    const rows = await buscarLancServidor(tipo, termo, valorMov, 0);
+                    if (!rows.length) return;
+                    const novos = rows.filter(r =>
+                        !selLanc.querySelector('option[value="' + r.id + '"]') &&
+                        !estado.alocacoes.some(a => a.lancamento_id === Number(r.id))
+                    );
+                    if (novos.length) {
+                        let grp = selLanc.querySelector('optgroup[data-remote="1"]');
+                        if (!grp) {
+                            grp = document.createElement('optgroup');
+                            grp.label = '🔎 Encontrados em outros meses';
+                            grp.setAttribute('data-remote', '1');
+                            selLanc.appendChild(grp);
+                        }
+                        novos.forEach(r => grp.insertAdjacentHTML('beforeend', pmBuildOption(tipo, r)));
+                    }
+                    filtrarLancs();
+                }
+                inpBusca.addEventListener('input', () => {
+                    filtrarLancs();
+                    clearTimeout(buscaTimer);
+                    buscaTimer = setTimeout(buscaRemota, 350);
+                });
                 // Atalho: Enter no campo de busca seleciona a 1ª option visível.
                 inpBusca.addEventListener('keydown', (ev) => {
                     if (ev.key === 'Enter') {
