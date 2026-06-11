@@ -47,6 +47,7 @@ if (!function_exists('saldoBancarioOfx')) {
                 WHERE COM_BANCO_FK = :banco_fk
                   AND COM_CONTA_REF = :conta_ref
                   AND COM_DATA_MOVIMENTO > :data_corte
+                  AND COALESCE(COM_STATUS, '') <> 'CANCELADO'
             ");
             $st->execute([
                 ':banco_fk'   => $bancoFk,
@@ -72,12 +73,14 @@ if (!function_exists('saldoBancarioOfx')) {
             return $cache[$key] = (float)$v;
         }
 
-        // 3) Fallback: saldo do último movimento OFX
+        // 3) Fallback: saldo do último movimento OFX (ignora movimentos cancelados,
+        //    ex.: transferências internas estornadas, cujo COM_SALDO_APOS está obsoleto)
         $st = $pdo->prepare("
             SELECT COM_SALDO_APOS
             FROM tb_conciliacao_ofx_movimento
             WHERE COM_BANCO_FK = :banco_fk
               AND COM_CONTA_REF = :conta_ref
+              AND COALESCE(COM_STATUS, '') <> 'CANCELADO'
             ORDER BY COM_DATA_MOVIMENTO DESC, COM_CODIGO_PK DESC
             LIMIT 1
         ");

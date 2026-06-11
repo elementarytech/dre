@@ -966,6 +966,7 @@ try {
             FROM tb_conciliacao_ofx_movimento
             WHERE COM_BANCO_FK = :banco_fk
               AND COM_CONTA_REF = :conta_ref
+              AND COALESCE(COM_STATUS, '') <> 'CANCELADO'
             ORDER BY COM_DATA_MOVIMENTO DESC, COM_CODIGO_PK DESC
             LIMIT 1
         ");
