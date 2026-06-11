@@ -635,9 +635,6 @@ $hojeTopo = date('d/m/Y');
                             <a href="diagnostico_contas_pagar.php" class="btn btn-sm btn-outline-warning" title="Painel de Integridade — pagamentos/recebimentos sem banco, vínculos inconsistentes etc.">
                                 <i class="bi bi-shield-check me-1"></i>Painel de Integridade
                             </a>
-                            <button type="button" class="btn btn-sm btn-outline-warning" id="btnAuditarVinculos" title="Detecta e cura vínculos OFX inconsistentes (conta paga sem movimento conciliado e vice-versa)">
-                                <i class="bi bi-link-45deg me-1"></i>Auditar vínculos OFX
-                            </button>
                             <button type="button" class="btn btn-sm btn-outline-primary" id="btnRevisarVinculosOfx" title="Listar importações OFX do banco e abrir os modais de revisão sob demanda">
                                 <i class="bi bi-list-check me-1"></i>Revisar vínculos OFX
                             </button>
@@ -1865,45 +1862,6 @@ $hojeTopo = date('d/m/Y');
             showToast("Ajuste salvo com sucesso.", "success");
         }
 
-        async function auditarVinculosOfx() {
-            const j = await apiGet({ acao: "auditar_vinculos_ofx" });
-            if (!j.ok) { showToast(j.msg || "Erro ao auditar.", "danger"); return; }
-
-            if (j.total === 0) {
-                Swal.fire({ icon: "success", title: "Nada a curar", text: "Todos os vínculos OFX estão consistentes." });
-                return;
-            }
-
-            const detalhe = `
-                <div class="text-start">
-                    <p class="mb-2">Foram encontradas <strong>${j.total}</strong> inconsistência(s):</p>
-                    <ul class="mb-3">
-                        <li><strong>${j.totalA}</strong> conta(s) a pagar com vínculo, mas movimento OFX não conciliado</li>
-                        <li><strong>${j.totalB}</strong> movimento(s) OFX referenciando conta a pagar sem o vínculo de volta</li>
-                        <li><strong>${j.totalC}</strong> conta(s) a receber com vínculo, mas movimento OFX não conciliado</li>
-                        <li><strong>${j.totalD}</strong> movimento(s) OFX referenciando conta a receber sem o vínculo de volta</li>
-                    </ul>
-                    <p class="text-muted small mb-0">A cura é segura: só completa vínculos onde já existe referência confirmada.</p>
-                </div>`;
-
-            const r = await Swal.fire({
-                icon: "warning",
-                title: "Curar vínculos?",
-                html: detalhe,
-                showCancelButton: true,
-                confirmButtonText: "Sim, curar agora",
-                cancelButtonText: "Cancelar"
-            });
-            if (!r.isConfirmed) return;
-
-            const fd = new FormData();
-            fd.append("acao", "curar_vinculos_ofx");
-            const jj = await apiPostForm(fd);
-            if (!jj.ok) { showToast(jj.msg || "Erro na cura.", "danger"); return; }
-            Swal.fire({ icon: "success", title: "Pronto", text: jj.msg, timer: 2500 });
-            await carregarExtrato();
-        }
-
         async function processarOfx() {
             const bancoFk = document.getElementById("selBancoOfx").value;
             const contaRef = document.getElementById("selContaOfx").value;
@@ -2819,7 +2777,6 @@ $hojeTopo = date('d/m/Y');
             document.getElementById("btnConciliarLanc").addEventListener("click", conciliarLancamento);
             document.getElementById("btnAjusteSaldo").addEventListener("click", carregarModalAjuste);
             document.getElementById("btnSalvarAjuste").addEventListener("click", salvarAjuste);
-            document.getElementById("btnAuditarVinculos")?.addEventListener("click", auditarVinculosOfx);
 
             ["ajConta", "ajTipo", "ajOp", "ajValor"].forEach(id => {
                 document.getElementById(id).addEventListener("change", atualizarPreviewAjuste);
