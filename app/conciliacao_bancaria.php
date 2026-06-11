@@ -2109,7 +2109,10 @@ $hojeTopo = date('d/m/Y');
                 const mesD = (d.data || '').substring(0, 7);
                 const lancList = (dpLancMes[mesD] || []);
                 const lancOpts = '<option value="">— vincular a um lançamento do mês —</option>' +
-                    lancList.map(r => `<option value="${r.id}">${escapeHtml(lancOptionLabel("PAGAR", r))}</option>`).join('');
+                    lancList.map(r => {
+                        const lbl = lancOptionLabel("PAGAR", r);
+                        return `<option value="${r.id}" data-search="${escapeAttr(pmNormalizar(lbl + ' #' + r.id))}">${escapeHtml(lbl)}</option>`;
+                    }).join('');
                 return `
                 <tr data-idx="${i}" data-matched="0" style="background:#fdecec">
                     <td><input type="checkbox" class="dp-row-chk" checked></td>
@@ -2120,6 +2123,7 @@ $hojeTopo = date('d/m/Y');
                     </td>
                     <td class="text-end mono small">R$ ${money(d.valor)}</td>
                     <td>
+                        <input type="text" class="form-control form-control-sm dp-row-vinc-busca mb-1" placeholder="🔍 Filtrar por nome, valor, #ID…" autocomplete="off">
                         <select class="form-select form-select-sm dp-row-vinc-fk" title="${lancList.length} lançamento(s) sem vínculo no mês ${mesD}">
                             ${lancOpts}
                         </select>
@@ -2153,6 +2157,28 @@ $hojeTopo = date('d/m/Y');
                         inf.classList.add("d-none");
                         inf.textContent = "";
                     }
+                });
+            });
+
+            // busca/filtro do select de vincular: filtra options por nome, valor e #ID
+            tb.querySelectorAll('tr[data-matched="0"]').forEach(tr => {
+                const inpB = tr.querySelector('.dp-row-vinc-busca');
+                const sel = tr.querySelector('.dp-row-vinc-fk');
+                if (!inpB || !sel) return;
+                inpB.addEventListener('input', () => {
+                    const termo = pmNormalizar(inpB.value);
+                    sel.querySelectorAll('option[data-search]').forEach(opt => {
+                        opt.hidden = !!termo && (opt.dataset.search || '').indexOf(termo) < 0;
+                    });
+                    const optSel = sel.options[sel.selectedIndex];
+                    if (optSel && optSel.hidden) { sel.value = ''; sel.dispatchEvent(new Event('change')); }
+                });
+                // Enter seleciona a 1ª option visível
+                inpB.addEventListener('keydown', (ev) => {
+                    if (ev.key !== 'Enter') return;
+                    ev.preventDefault();
+                    const first = Array.from(sel.querySelectorAll('option[data-search]')).find(o => !o.hidden);
+                    if (first) { sel.value = first.value; sel.dispatchEvent(new Event('change')); }
                 });
             });
 
