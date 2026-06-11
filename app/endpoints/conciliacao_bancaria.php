@@ -1846,8 +1846,13 @@ try {
         if (!in_array($tipo, ['PAGAR', 'RECEBER'], true) || !preg_match('/^\d{4}-\d{2}$/', $mes)) {
             json_out(['ok' => false, 'msg' => 'Parâmetros inválidos.'], 422);
         }
-        $iniMes = $mes . '-01';
-        $fimMes = (new DateTime($iniMes))->modify('last day of this month')->format('Y-m-d');
+        // Janela ampliada para o mês de referência ± 1: pagamentos/recebimentos
+        // frequentemente cruzam a virada do mês (vence 31/05, cai no extrato em
+        // 01/06; ou PIX antecipado de uma parcela do mês seguinte). Sem isso, o
+        // lançamento ficava invisível na conciliação do movimento.
+        $baseMes = new DateTime($mes . '-01');
+        $iniMes  = (clone $baseMes)->modify('first day of previous month')->format('Y-m-d');
+        $fimMes  = (clone $baseMes)->modify('last day of next month')->format('Y-m-d');
 
         if ($tipo === 'PAGAR') {
             $sql = "

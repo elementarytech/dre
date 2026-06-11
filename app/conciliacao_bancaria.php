@@ -2124,7 +2124,7 @@ $hojeTopo = date('d/m/Y');
                     <td class="text-end mono small">R$ ${money(d.valor)}</td>
                     <td>
                         <input type="text" class="form-control form-control-sm dp-row-vinc-busca mb-1" placeholder="🔍 Filtrar por nome, valor, #ID…" autocomplete="off">
-                        <select class="form-select form-select-sm dp-row-vinc-fk" title="${lancList.length} lançamento(s) sem vínculo no mês ${mesD}">
+                        <select class="form-select form-select-sm dp-row-vinc-fk" title="${lancList.length} lançamento(s) sem vínculo (mês ${mesD} ± 1)">
                             ${lancOpts}
                         </select>
                         <div class="dp-row-vinc-info small text-success mt-1 d-none"></div>
@@ -2549,7 +2549,10 @@ $hojeTopo = date('d/m/Y');
                 const mesC = (c.data || '').substring(0, 7);
                 const lancListC = (cpLancMes[mesC] || []);
                 const lancOptsC = '<option value="">— vincular a um lançamento do mês —</option>' +
-                    lancListC.map(r => `<option value="${r.id}">${escapeHtml(lancOptionLabel("RECEBER", r))}</option>`).join('');
+                    lancListC.map(r => {
+                        const lbl = lancOptionLabel("RECEBER", r);
+                        return `<option value="${r.id}" data-search="${escapeAttr(pmNormalizar(lbl + ' #' + r.id))}">${escapeHtml(lbl)}</option>`;
+                    }).join('');
                 return `
                 <tr data-idx="${i}" data-matched="0" style="background:#fdecec">
                     <td><input type="checkbox" class="cp-row-chk" checked></td>
@@ -2560,7 +2563,8 @@ $hojeTopo = date('d/m/Y');
                     </td>
                     <td class="text-end mono small">R$ ${money(c.valor)}</td>
                     <td>
-                        <select class="form-select form-select-sm cp-row-vinc-fk" title="${lancListC.length} lançamento(s) sem vínculo no mês ${mesC}">
+                        <input type="text" class="form-control form-control-sm cp-row-vinc-busca mb-1" placeholder="🔍 Filtrar por nome, valor, #ID…" autocomplete="off">
+                        <select class="form-select form-select-sm cp-row-vinc-fk" title="${lancListC.length} lançamento(s) sem vínculo (mês ${mesC} ± 1)">
                             ${lancOptsC}
                         </select>
                         <div class="cp-row-vinc-info small text-success mt-1 d-none"></div>
@@ -2631,6 +2635,28 @@ $hojeTopo = date('d/m/Y');
                         inf.classList.add("d-none");
                         inf.textContent = "";
                     }
+                });
+            });
+
+            // busca/filtro do select de vincular: filtra options por nome, valor e #ID
+            tb.querySelectorAll('tr[data-matched="0"]').forEach(tr => {
+                const inpB = tr.querySelector('.cp-row-vinc-busca');
+                const sel = tr.querySelector('.cp-row-vinc-fk');
+                if (!inpB || !sel) return;
+                inpB.addEventListener('input', () => {
+                    const termo = pmNormalizar(inpB.value);
+                    sel.querySelectorAll('option[data-search]').forEach(opt => {
+                        opt.hidden = !!termo && (opt.dataset.search || '').indexOf(termo) < 0;
+                    });
+                    const optSel = sel.options[sel.selectedIndex];
+                    if (optSel && optSel.hidden) { sel.value = ''; sel.dispatchEvent(new Event('change')); }
+                });
+                // Enter seleciona a 1ª option visível
+                inpB.addEventListener('keydown', (ev) => {
+                    if (ev.key !== 'Enter') return;
+                    ev.preventDefault();
+                    const first = Array.from(sel.querySelectorAll('option[data-search]')).find(o => !o.hidden);
+                    if (first) { sel.value = first.value; sel.dispatchEvent(new Event('change')); }
                 });
             });
         }
