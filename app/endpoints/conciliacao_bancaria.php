@@ -255,14 +255,25 @@ try {
             $diferenca = $saldoBancario - $saldoErp;
             $conciliacaoStatus = abs($diferenca) < 0.01 ? 'OK' : 'DIVERGENTE';
 
-            $atualizado = date('Y-m-d');
-            $last = null;
-            if ($last && !empty($last['COM_DATA_MOVIMENTO'])) {
-                $atualizado = $last['COM_DATA_MOVIMENTO'];
-            }
-            if ($set && !empty($set['CAS_DATA_CADASTRO'])) {
-                $atualizado = substr((string)$set['CAS_DATA_CADASTRO'], 0, 10);
-            }
+            // Data de atualização = atividade mais recente que afeta o saldo:
+            // último movimento OFX (não cancelado) OU o ajuste SET ativo — o que for
+            // mais recente. Antes só usava a data do SET (ficava travada em ajustes
+            // antigos) e o ramo do último movimento era código morto ($last = null).
+            $stUlt = $pdo->prepare("
+                SELECT MAX(COM_DATA_MOVIMENTO) AS ult
+                FROM tb_conciliacao_ofx_movimento
+                WHERE COM_BANCO_FK = :banco_fk
+                  AND COM_CONTA_REF = :conta_ref
+                  AND COALESCE(COM_STATUS, '') <> 'CANCELADO'
+            ");
+            $stUlt->execute([':banco_fk' => $bancoFk, ':conta_ref' => $contaRef]);
+            $ultMov = (string)($stUlt->fetchColumn() ?: '');
+
+            $datasAtualizacao = array_filter([
+                $ultMov,
+                $set && !empty($set['CAS_DATA_CADASTRO']) ? substr((string)$set['CAS_DATA_CADASTRO'], 0, 10) : '',
+            ]);
+            $atualizado = $datasAtualizacao ? max($datasAtualizacao) : date('Y-m-d');
 
             $textoBusca = mb_strtolower(
                 (string)($b['BAN_APELIDO'] ?: $b['BAN_NOME']) . ' ' .

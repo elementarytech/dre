@@ -183,6 +183,20 @@ try {
                 WHERE COM_BANCO_FK = ? AND COM_CONCILIADO = 'SIM' AND COM_DATA_MOVIMENTO <= CURDATE()
             ");
 
+            // "Saldo atualizado em": atividade mais recente que afeta o saldo —
+            // último movimento OFX (não cancelado) ou ajuste SET ativo. Antes o
+            // campo FCB_ATUALIZADO_EM não era retornado e a tela mostrava sempre "—".
+            $stUltMov = $pdo->prepare("
+                SELECT MAX(COM_DATA_MOVIMENTO)
+                FROM tb_conciliacao_ofx_movimento
+                WHERE COM_BANCO_FK = ? AND COM_CONTA_REF = ? AND COALESCE(COM_STATUS,'') <> 'CANCELADO'
+            ");
+            $stUltSet = $pdo->prepare("
+                SELECT MAX(CAS_DATA_CADASTRO)
+                FROM tb_conciliacao_ajuste_saldo
+                WHERE CAS_BANCO_FK = ? AND CAS_CONTA_REF = ? AND CAS_STATUS = 'ATIVO'
+            ");
+
             // Entradas/saídas só do dia de hoje (informativo, não compõem o saldo)
             $phCre = sql_placeholders(CRE_STATUS_PAGO);
             $phCpg = sql_placeholders(CPG_STATUS_PAGO);
@@ -205,6 +219,14 @@ try {
                 $stUltConc->execute([$banId]);
                 $ultimaConc = $stUltConc->fetchColumn() ?: null;
 
+                $stUltMov->execute([$banId, $contaRef]);
+                $ultMov = (string)($stUltMov->fetchColumn() ?: '');
+                $stUltSet->execute([$banId, $contaRef]);
+                $ultSet = $stUltSet->fetchColumn();
+                $ultSet = $ultSet ? substr((string)$ultSet, 0, 10) : '';
+                $datasAt = array_filter([$ultMov, $ultSet]);
+                $atualizadoEm = $datasAt ? max($datasAt) : null;
+
                 $stEntHoje->execute(array_merge([$banId], CRE_STATUS_PAGO));
                 $entHoje = (float)$stEntHoje->fetchColumn();
                 $stSaiHoje->execute(array_merge([$banId], CPG_STATUS_PAGO));
@@ -215,6 +237,7 @@ try {
                 $b['FCB_ENTRADAS_DIA']  = round($entHoje, 2);
                 $b['FCB_SAIDAS_DIA']    = round($saiHoje, 2);
                 $b['FCB_DATA']          = date('Y-m-d');
+                $b['FCB_ATUALIZADO_EM'] = $atualizadoEm;
                 $b['ULTIMA_CONCILIACAO'] = $ultimaConc;
                 // Compatibilidade com chaves antigas (front pode olhar)
                 $b['SALDO_INICIAL']        = $b['FCB_SALDO_ATUAL'];
