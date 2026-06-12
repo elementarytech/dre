@@ -1167,9 +1167,13 @@ try {
                 }
             }
 
-            // 3) Aplicação automática do mesmo banco (Rende Fácil, MaxiInvest, etc.)
+            // 3) Aplicação/resgate automático do mesmo banco (Rende Fácil, MaxiInvest,
+            //    e o resgate de conta remunerada do BTG: "RESGATE CONTA REMUNERADA").
+            //    O crédito-contrapartida ("CRÉDITO NA CONTA CORRENTE") é tratado depois,
+            //    por pareamento (ver bloco "Resgate automático" pós-loop), pois o texto
+            //    sozinho é genérico demais.
             if ($natureza === 'NORMAL') {
-                $padraoAplicacao = '/RENDE\s+F[AÁ]CIL|APLIC(A[CÇ][AÃ]O)?\s+AUT|RESGATE\s+AUT|MAXI\s*INVEST|EASY\s*INVEST|FUNDO\s+AUTOM|CDB\s+AUT/iu';
+                $padraoAplicacao = '/RENDE\s+F[AÁ]CIL|APLIC(A[CÇ][AÃ]O)?\s+AUT|RESGATE\s+AUT|RESGATE\s+CONTA\s+REMUNERADA|CONTA\s+REMUNERADA|MAXI\s*INVEST|EASY\s*INVEST|FUNDO\s+AUTOM|CDB\s+AUT/iu';
                 if (preg_match($padraoAplicacao, $nameCru) || preg_match($padraoAplicacao, $descricao)) {
                     $natureza = 'APLICACAO';
                 }
@@ -1207,6 +1211,29 @@ try {
 
             $incluidos++;
         }
+
+        // ===== Resgate automático de aplicação (ex.: BTG) — pareamento (opção B) =====
+        // O "CRÉDITO NA CONTA CORRENTE" (+) é a contrapartida do "RESGATE CONTA
+        // REMUNERADA" (-) de mesmo valor/dia na mesma conta: é movimento interno
+        // (soma zero), não é receita. Só marca como APLICACAO quando o par existe —
+        // evita classificar errado um crédito legítimo. O resgate (débito) já foi
+        // pego pelo regex de natureza acima.
+        $pdo->prepare("
+            UPDATE tb_conciliacao_ofx_movimento c
+            JOIN tb_conciliacao_ofx_movimento r
+              ON r.COM_BANCO_FK = c.COM_BANCO_FK
+             AND r.COM_CONTA_REF = c.COM_CONTA_REF
+             AND r.COM_DATA_MOVIMENTO = c.COM_DATA_MOVIMENTO
+             AND r.COM_VALOR < 0
+             AND ABS(ABS(r.COM_VALOR) - c.COM_VALOR) < 0.01
+             AND r.COM_DESCRICAO LIKE '%RESGATE CONTA REMUNERADA%'
+            SET c.COM_NATUREZA = 'APLICACAO'
+            WHERE c.COM_BANCO_FK = :banco
+              AND c.COM_CONTA_REF = :conta
+              AND c.COM_NATUREZA = 'NORMAL'
+              AND c.COM_VALOR > 0
+              AND c.COM_DESCRICAO LIKE '%CR_DITO NA CONTA CORRENTE%'
+        ")->execute([':banco' => $bancoFk, ':conta' => $contaRef]);
 
         $saldoFinalOficial = ($saldoLedgerOfx !== null) ? $saldoLedgerOfx : $saldoAtual;
 
