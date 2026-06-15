@@ -105,12 +105,12 @@ $__userNome = (string)($_SESSION['user_nome'] ?? 'Usuário');
           </div>
 
           <div class="col-md-4">
-            <div class="rep-card" style="cursor:not-allowed; opacity:.6;">
+            <a href="pendencias_conciliacao.php" class="rep-card">
               <div class="rep-icon purple"><i class="fa-solid fa-scale-balanced"></i></div>
-              <div class="rep-title">Conciliação Bancária</div>
-              <div class="rep-desc">Comparativo entre saldo bancário (OFX) e saldo ERP por conta, com divergências detalhadas.</div>
-              <span class="rep-tag soon">Em breve</span>
-            </div>
+              <div class="rep-title">Pendências de Conciliação</div>
+              <div class="rep-desc">Movimentos do banco (OFX) que ainda precisam ser conciliados, por período e banco. Não inclui internos (transferência/aplicação/tarifa). Exporta CSV.</div>
+              <span class="rep-tag">Disponível</span>
+            </a>
           </div>
 
         </div>
