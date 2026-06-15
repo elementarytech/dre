@@ -2973,8 +2973,19 @@ try {
                 i.COI_DATA_CADASTRO AS data_cadastro,
                 COUNT(m.COM_CODIGO_PK) AS qtd_total,
                 SUM(CASE WHEN m.COM_CONCILIADO = 'SIM' THEN 1 ELSE 0 END) AS qtd_conciliados,
-                SUM(CASE WHEN COALESCE(m.COM_CONCILIADO,'NAO') <> 'SIM' AND m.COM_TIPO = 'DEBITO' THEN 1 ELSE 0 END) AS qtd_debitos_pendentes,
-                SUM(CASE WHEN COALESCE(m.COM_CONCILIADO,'NAO') <> 'SIM' AND m.COM_TIPO = 'CREDITO' THEN 1 ELSE 0 END) AS qtd_creditos_pendentes
+                -- Pendentes contam SÓ o que a lista de conciliação realmente mostra:
+                -- exclui movimentos internos (transferência/aplicação/tarifa/rendimento),
+                -- que nunca viram CONCILIADO e antes inflavam o contador para sempre.
+                SUM(CASE WHEN COALESCE(m.COM_CONCILIADO,'NAO') <> 'SIM'
+                          AND COALESCE(m.COM_NATUREZA,'NORMAL') NOT IN ('TRANSFERENCIA_INTERNA','APLICACAO','TARIFA','RENDIMENTO')
+                          AND m.COM_TIPO = 'DEBITO' THEN 1 ELSE 0 END) AS qtd_debitos_pendentes,
+                SUM(CASE WHEN COALESCE(m.COM_CONCILIADO,'NAO') <> 'SIM'
+                          AND COALESCE(m.COM_NATUREZA,'NORMAL') NOT IN ('TRANSFERENCIA_INTERNA','APLICACAO','TARIFA','RENDIMENTO')
+                          AND m.COM_TIPO = 'CREDITO' THEN 1 ELSE 0 END) AS qtd_creditos_pendentes,
+                -- Internos resolvidos automaticamente (informativo, p/ as colunas fecharem)
+                SUM(CASE WHEN COALESCE(m.COM_CONCILIADO,'NAO') <> 'SIM'
+                          AND COALESCE(m.COM_NATUREZA,'NORMAL') IN ('TRANSFERENCIA_INTERNA','APLICACAO','TARIFA','RENDIMENTO')
+                          THEN 1 ELSE 0 END) AS qtd_internos
             FROM tb_conciliacao_ofx_importacao i
             LEFT JOIN tb_conciliacao_ofx_movimento m ON m.COM_IMPORTACAO_FK = i.COI_CODIGO_PK
             WHERE i.COI_BANCO_FK = ?

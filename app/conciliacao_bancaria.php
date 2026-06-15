@@ -1092,11 +1092,12 @@ $hojeTopo = date('d/m/Y');
                                     <th class="text-end">Conc.</th>
                                     <th class="text-end">Déb. pend.</th>
                                     <th class="text-end">Créd. pend.</th>
+                                    <th class="text-end" title="Movimentos internos resolvidos automaticamente (transferência, aplicação/resgate, tarifa, rendimento) — não precisam de vínculo">Internos</th>
                                     <th>Importada em</th>
                                     <th class="text-end">Ações</th>
                                 </tr>
                             </thead>
-                            <tbody id="rvTbody"><tr><td colspan="10" class="text-center text-muted small">Carregando…</td></tr></tbody>
+                            <tbody id="rvTbody"><tr><td colspan="11" class="text-center text-muted small">Carregando…</td></tr></tbody>
                         </table>
                     </div>
                 </div>
@@ -3419,17 +3420,17 @@ $hojeTopo = date('d/m/Y');
             if (!bancoFk) { showToast('Selecione um banco antes.', 'warning'); return; }
 
             const tb = document.getElementById('rvTbody');
-            tb.innerHTML = '<tr><td colspan="10" class="text-center text-muted small">Carregando…</td></tr>';
+            tb.innerHTML = '<tr><td colspan="11" class="text-center text-muted small">Carregando…</td></tr>';
             const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRevisarVinculos'));
             modal.show();
 
             const j = await apiGet({ acao: 'resumo_importacoes_banco', banco_fk: bancoFk });
             if (!j.ok) {
-                tb.innerHTML = `<tr><td colspan="10" class="text-center text-danger small">${escapeHtml(j.msg || 'Erro')}</td></tr>`;
+                tb.innerHTML = `<tr><td colspan="11" class="text-center text-danger small">${escapeHtml(j.msg || 'Erro')}</td></tr>`;
                 return;
             }
             if (!j.rows || !j.rows.length) {
-                tb.innerHTML = '<tr><td colspan="10" class="text-center text-muted small">Nenhuma importação para este banco.</td></tr>';
+                tb.innerHTML = '<tr><td colspan="11" class="text-center text-muted small">Nenhuma importação para este banco.</td></tr>';
                 return;
             }
 
@@ -3448,6 +3449,7 @@ $hojeTopo = date('d/m/Y');
                         <td class="text-end small text-success">${r.qtd_conciliados}</td>
                         <td class="text-end small ${podeRevisarD ? 'text-warning fw-bold' : 'text-muted'}">${r.qtd_debitos_pendentes}</td>
                         <td class="text-end small ${podeRevisarC ? 'text-warning fw-bold' : 'text-muted'}">${r.qtd_creditos_pendentes}</td>
+                        <td class="text-end small text-muted" title="Internos resolvidos automaticamente (transferência, aplicação/resgate, tarifa, rendimento)">${r.qtd_internos ?? 0}</td>
                         <td class="small text-muted">${r.data_cadastro ? formatDateBR(r.data_cadastro) : '—'}</td>
                         <td class="text-end">
                             <button class="btn btn-sm btn-outline-danger" data-rv-deb="${r.imp_id}" ${podeRevisarD ? '' : 'disabled'} title="Revisar débitos pendentes">
