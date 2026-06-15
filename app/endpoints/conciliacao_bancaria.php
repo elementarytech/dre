@@ -1907,11 +1907,13 @@ try {
                        COALESCE(NULLIF(f.FOR_NOME_FANTASIA,''), f.FOR_RAZAO_SOCIAL) AS fornecedor
                 FROM tb_contas_pagar cp
                 LEFT JOIN tb_fornecedor f ON f.FOR_CODIGO_PK = cp.CPG_FORNECEDOR_FK
-                WHERE cp.CPG_OFX_MOVIMENTO_FK IS NULL
-                  AND UPPER(COALESCE(cp.CPG_STATUS,'')) <> 'CANCELADO'
+                WHERE UPPER(COALESCE(cp.CPG_STATUS,'')) <> 'CANCELADO'
                   AND (
-                        (cp.CPG_VENCIMENTO BETWEEN ? AND ?)
-                     OR (cp.CPG_DATA_PAGAMENTO BETWEEN ? AND ?)
+                        -- ainda não vinculado e dentro do período (caso normal)
+                        (cp.CPG_OFX_MOVIMENTO_FK IS NULL
+                         AND ( (cp.CPG_VENCIMENTO BETWEEN ? AND ?)
+                            OR (cp.CPG_DATA_PAGAMENTO BETWEEN ? AND ?) ))
+                        -- OU parcial com saldo restante (mesmo já tendo um vínculo do 1º pagamento)
                      OR (cp.CPG_VALOR_PAGO IS NOT NULL
                          AND cp.CPG_VALOR_PAGO > 0
                          AND cp.CPG_VALOR_PAGO < cp.CPG_VALOR_PARCELA)
@@ -1939,11 +1941,13 @@ try {
                 LEFT JOIN contrato_parcelas cpa
                     ON cpa.CPA_CTR_ID = cr.CRE_CONTRATO_FK
                    AND cpa.CPA_VENCIMENTO = cr.CRE_VENCIMENTO
-                WHERE cr.CRE_OFX_MOVIMENTO_FK IS NULL
-                  AND UPPER(COALESCE(cr.CRE_STATUS,'')) <> 'CANCELADO'
+                WHERE UPPER(COALESCE(cr.CRE_STATUS,'')) <> 'CANCELADO'
                   AND (
-                        (cr.CRE_VENCIMENTO BETWEEN ? AND ?)
-                     OR (cr.CRE_RECEBIDO_EM BETWEEN ? AND ?)
+                        -- ainda não vinculado e dentro do período (caso normal)
+                        (cr.CRE_OFX_MOVIMENTO_FK IS NULL
+                         AND ( (cr.CRE_VENCIMENTO BETWEEN ? AND ?)
+                            OR (cr.CRE_RECEBIDO_EM BETWEEN ? AND ?) ))
+                        -- OU parcial com saldo restante (mesmo já tendo um vínculo do 1º recebimento)
                      OR (cr.CRE_VALOR_RECEBIDO IS NOT NULL
                          AND cr.CRE_VALOR_RECEBIDO > 0
                          AND cr.CRE_VALOR_RECEBIDO < cr.CRE_VALOR)
@@ -1990,7 +1994,7 @@ try {
                      cp.CPG_QTD_PARCELAS AS qtd_parcelas,
                      f.FOR_RAZAO_SOCIAL AS fornecedor_razao,
                      f.FOR_NOME_FANTASIA AS fornecedor_fantasia";
-            $where  = ["cp.CPG_OFX_MOVIMENTO_FK IS NULL", "UPPER(COALESCE(cp.CPG_STATUS,'')) <> 'CANCELADO'"];
+            $where  = ["(cp.CPG_OFX_MOVIMENTO_FK IS NULL OR (cp.CPG_VALOR_PAGO > 0 AND cp.CPG_VALOR_PAGO < cp.CPG_VALOR_PARCELA))", "UPPER(COALESCE(cp.CPG_STATUS,'')) <> 'CANCELADO'"];
             $params = [];
             if ($temTexto) {
                 $cond = "cp.CPG_DESCRICAO LIKE ? OR cp.CPG_DOCUMENTO LIKE ? OR cp.CPG_NOTA_FISCAL LIKE ?
@@ -2023,7 +2027,7 @@ try {
                      cpa.CPA_NUM AS num_parcela,
                      cpa.CPA_TOTAL AS qtd_parcelas,
                      cr.CRE_CLIENTE_NOME AS cliente_nome";
-            $where  = ["cr.CRE_OFX_MOVIMENTO_FK IS NULL", "UPPER(COALESCE(cr.CRE_STATUS,'')) <> 'CANCELADO'"];
+            $where  = ["(cr.CRE_OFX_MOVIMENTO_FK IS NULL OR (cr.CRE_VALOR_RECEBIDO > 0 AND cr.CRE_VALOR_RECEBIDO < cr.CRE_VALOR))", "UPPER(COALESCE(cr.CRE_STATUS,'')) <> 'CANCELADO'"];
             $params = [];
             if ($temTexto) {
                 $cond = "cr.CRE_OBSERVACAO LIKE ? OR cr.CRE_DOCUMENTO LIKE ? OR cr.CRE_CLIENTE_NOME LIKE ?";
@@ -2086,20 +2090,25 @@ try {
                 $stL->execute([$lancId]);
                 $lanc = $stL->fetch(PDO::FETCH_ASSOC);
                 if (!$lanc) throw new Exception('Lançamento a pagar não encontrado.');
-                if ($lanc['CPG_OFX_MOVIMENTO_FK']) {
-                    throw new Exception('Este lançamento já está vinculado a outro movimento OFX.');
-                }
 
-                $statusAtual = strtoupper((string)$lanc['CPG_STATUS']);
-                if ($statusAtual === 'PAGO') {
+                $statusAtual     = strtoupper((string)$lanc['CPG_STATUS']);
+                $valorOriginal   = (float)$lanc['CPG_VALOR_PARCELA'];
+                $jaPago          = (float)$lanc['CPG_VALOR_PAGO'];
+                // Só está "fechado" se PAGO E o valor pago cobre a parcela. PAGO com
+                // valor menor = parcial (precisa aceitar o 2º pagamento).
+                $quitadaIntegral = ($statusAtual === 'PAGO') && (abs($jaPago - $valorOriginal) < 0.01);
+                if ($quitadaIntegral) {
+                    if ($lanc['CPG_OFX_MOVIMENTO_FK']) {
+                        throw new Exception('Este lançamento já está pago e vinculado a outro movimento OFX.');
+                    }
                     $pdo->prepare("UPDATE tb_contas_pagar
                                    SET CPG_OFX_MOVIMENTO_FK = ?
                                    WHERE CPG_CODIGO_PK = ?")
                         ->execute([$movFk, $lancId]);
                 } else {
-                    // Soma o valor do OFX ao já pago (suporta múltiplos pagamentos numa mesma parcela).
-                    $valorOriginal = (float)$lanc['CPG_VALOR_PARCELA'];
-                    $jaPago        = (float)$lanc['CPG_VALOR_PAGO'];
+                    // Em aberto/parcial — soma o valor do OFX ao já pago. Suporta um 2º
+                    // pagamento parcial mesmo quando o 1º já deixou um vínculo legado
+                    // (mantém o FK original via $cacheFk).
                     $novoPago      = round($jaPago + $valorAbs, 2);
                     $quitado       = ($novoPago + 0.005) >= $valorOriginal;
                     $venc          = (string)($lanc['CPG_VENCIMENTO'] ?? '');
@@ -2112,17 +2121,18 @@ try {
                         $novoPagoFlag = 'NAO';
                         $novoTipo   = 'PARCIAL';
                     }
+                    $cacheFk = $lanc['CPG_OFX_MOVIMENTO_FK'] ?: $movFk;
                     $pdo->prepare("UPDATE tb_contas_pagar
                                    SET CPG_PAGO = ?,
                                        CPG_STATUS = ?,
                                        CPG_INTEGRAL_PARCIAL = ?,
-                                       CPG_DATA_PAGAMENTO = ?,
-                                       CPG_BANCO_PAGAMENTO_FK = ?,
+                                       CPG_DATA_PAGAMENTO = COALESCE(CPG_DATA_PAGAMENTO, ?),
+                                       CPG_BANCO_PAGAMENTO_FK = COALESCE(CPG_BANCO_PAGAMENTO_FK, ?),
                                        CPG_VALOR_PAGO = ?,
                                        CPG_OFX_MOVIMENTO_FK = ?,
                                        CPG_AUTORIZACAO_STATUS = COALESCE(CPG_AUTORIZACAO_STATUS, 'AUTORIZADO')
                                    WHERE CPG_CODIGO_PK = ?")
-                        ->execute([$novoPagoFlag, $novoStatus, $novoTipo, $dataMov, $bancoFk, $novoPago, $movFk, $lancId]);
+                        ->execute([$novoPagoFlag, $novoStatus, $novoTipo, $dataMov, $bancoFk, $novoPago, $cacheFk, $lancId]);
                 }
             } else {
                 $stL = $pdo->prepare("SELECT CRE_ID, CRE_STATUS, CRE_VALOR, CRE_VENCIMENTO,
@@ -2132,20 +2142,25 @@ try {
                 $stL->execute([$lancId]);
                 $lanc = $stL->fetch(PDO::FETCH_ASSOC);
                 if (!$lanc) throw new Exception('Lançamento a receber não encontrado.');
-                if ($lanc['CRE_OFX_MOVIMENTO_FK']) {
-                    throw new Exception('Este lançamento já está vinculado a outro movimento OFX.');
-                }
 
-                $statusAtual = strtoupper((string)$lanc['CRE_STATUS']);
-                if (in_array($statusAtual, ['RECEBIDO', 'PAGO'], true)) {
+                $statusAtual     = strtoupper((string)$lanc['CRE_STATUS']);
+                $valorOriginal   = (float)$lanc['CRE_VALOR'];
+                $jaRecebido      = (float)$lanc['CRE_VALOR_RECEBIDO'];
+                // Só está "fechado" se RECEBIDO/PAGO E o valor recebido cobre o total.
+                // RECEBIDO com valor menor = parcial (precisa aceitar o 2º recebimento).
+                $quitadaIntegral = in_array($statusAtual, ['RECEBIDO', 'PAGO'], true)
+                                   && (abs($jaRecebido - $valorOriginal) < 0.01);
+                if ($quitadaIntegral) {
+                    if ($lanc['CRE_OFX_MOVIMENTO_FK']) {
+                        throw new Exception('Este lançamento já está recebido e vinculado a outro movimento OFX.');
+                    }
                     $pdo->prepare("UPDATE tb_contas_receber
                                    SET CRE_OFX_MOVIMENTO_FK = ?
                                    WHERE CRE_ID = ?")
                         ->execute([$movFk, $lancId]);
                 } else {
-                    // Soma o valor do OFX ao que já foi recebido (suporta múltiplos PIX numa mesma parcela).
-                    $valorOriginal = (float)$lanc['CRE_VALOR'];
-                    $jaRecebido    = (float)$lanc['CRE_VALOR_RECEBIDO'];
+                    // Em aberto/parcial — soma o valor do OFX ao já recebido. Suporta um 2º
+                    // recebimento parcial mesmo quando o 1º já deixou um vínculo legado.
                     $novoRecebido  = round($jaRecebido + $valorAbs, 2);
                     $quitado       = ($novoRecebido + 0.005) >= $valorOriginal;
                     $venc          = (string)($lanc['CRE_VENCIMENTO'] ?? '');
@@ -2156,15 +2171,16 @@ try {
                         $novoStatus = ($venc !== '' && $venc < date('Y-m-d')) ? 'ATRASADO' : 'ABERTO';
                         $novoTipo   = 'PARCIAL';
                     }
+                    $cacheFk = $lanc['CRE_OFX_MOVIMENTO_FK'] ?: $movFk;
                     $pdo->prepare("UPDATE tb_contas_receber
                                    SET CRE_STATUS = ?,
                                        CRE_TIPO_RECEBIMENTO = ?,
-                                       CRE_RECEBIDO_EM = ?,
-                                       CRE_BANCO_FK = ?,
+                                       CRE_RECEBIDO_EM = COALESCE(CRE_RECEBIDO_EM, ?),
+                                       CRE_BANCO_FK = COALESCE(CRE_BANCO_FK, ?),
                                        CRE_VALOR_RECEBIDO = ?,
                                        CRE_OFX_MOVIMENTO_FK = ?
                                    WHERE CRE_ID = ?")
-                        ->execute([$novoStatus, $novoTipo, $dataMov, $bancoFk, $novoRecebido, $movFk, $lancId]);
+                        ->execute([$novoStatus, $novoTipo, $dataMov, $bancoFk, $novoRecebido, $cacheFk, $lancId]);
                 }
             }
 
