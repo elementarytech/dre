@@ -1673,6 +1673,10 @@ try {
 
         $phRec = sql_placeholders(CRE_STATUS_PAGO);
 
+        // Auto-match de créditos: sugere a parcela provável para o recebimento.
+        // Inclui parcelas EM ABERTO (não só já recebidas), casa o valor com o TOTAL
+        // da parcela OU com o SALDO RESTANTE (recebimento que completa um parcial) e
+        // NÃO trava por banco (o dinheiro pode cair numa conta diferente da cadastrada).
         $selectMatchCre = "
             SELECT cr.CRE_ID AS id,
                    cr.CRE_VENCIMENTO AS vencimento,
@@ -1688,9 +1692,11 @@ try {
             LEFT JOIN contrato_parcelas cpa
                 ON cpa.CPA_CTR_ID = cr.CRE_CONTRATO_FK
                AND cpa.CPA_VENCIMENTO = cr.CRE_VENCIMENTO
-            WHERE cr.CRE_BANCO_FK = ?
-              AND cr.CRE_STATUS IN ({$phRec})
-              AND ABS(IFNULL(cr.CRE_VALOR_RECEBIDO, cr.CRE_VALOR) - ?) < 0.01
+            WHERE UPPER(COALESCE(cr.CRE_STATUS,'')) <> 'CANCELADO'
+              AND (cr.CRE_OFX_MOVIMENTO_FK IS NULL
+                   OR (cr.CRE_VALOR_RECEBIDO > 0 AND cr.CRE_VALOR_RECEBIDO < cr.CRE_VALOR))
+              AND ( ABS(cr.CRE_VALOR - ?) < 0.01
+                 OR ABS((cr.CRE_VALOR - COALESCE(cr.CRE_VALOR_RECEBIDO,0)) - ?) < 0.01 )
         ";
 
         $resultado = [];
@@ -1701,8 +1707,10 @@ try {
         foreach ($creditos as $c) {
             $valorAbs = abs((float)$c['COM_VALOR']);
             $data     = (string)$c['COM_DATA_MOVIMENTO'];
-            $di       = (new DateTime($data))->modify('-3 days')->format('Y-m-d 00:00:00');
-            $df       = (new DateTime($data))->modify('+3 days')->format('Y-m-d 23:59:59');
+            // Janela ampla de proximidade (±45 dias): recebimentos podem ser
+            // antecipados/atrasados em relação ao vencimento da parcela.
+            $di = (new DateTime($data))->modify('-45 days')->format('Y-m-d');
+            $df = (new DateTime($data))->modify('+45 days')->format('Y-m-d');
 
             $exclusao = '';
             $paramsExcl = [];
@@ -1713,32 +1721,33 @@ try {
             }
 
             $match = null;
+            // 1) Documento igual (sinal forte) — independe de data/banco.
             $doc = trim((string)$c['COM_DOCUMENTO']);
             if ($doc !== '') {
                 $stMatchDoc = $pdo->prepare($selectMatchCre . $exclusao . " AND cr.CRE_DOCUMENTO = ? LIMIT 1");
-                $stMatchDoc->execute(array_merge(
-                    [(int)$c['COM_BANCO_FK']],
-                    CRE_STATUS_PAGO,
-                    [$valorAbs],
-                    $paramsExcl,
-                    [$doc]
-                ));
+                $stMatchDoc->execute(array_merge([$valorAbs, $valorAbs], $paramsExcl, [$doc]));
                 $match = $stMatchDoc->fetch(PDO::FETCH_ASSOC) ?: null;
             }
+            // 2) Proximidade de data: vencimento OU recebimento perto do movimento,
+            //    escolhendo a parcela com a data mais próxima.
             if (!$match) {
-                $stMatchVD = $pdo->prepare($selectMatchCre . $exclusao . " AND cr.CRE_RECEBIDO_EM BETWEEN ? AND ? LIMIT 1");
-                $stMatchVD->execute(array_merge(
-                    [(int)$c['COM_BANCO_FK']],
-                    CRE_STATUS_PAGO,
-                    [$valorAbs],
-                    $paramsExcl,
-                    [$di, $df]
-                ));
+                $stMatchVD = $pdo->prepare($selectMatchCre . $exclusao . "
+                    AND ( (cr.CRE_RECEBIDO_EM BETWEEN ? AND ?) OR (cr.CRE_VENCIMENTO BETWEEN ? AND ?) )
+                    ORDER BY ABS(DATEDIFF(COALESCE(cr.CRE_RECEBIDO_EM, cr.CRE_VENCIMENTO), ?)) ASC,
+                             cr.CRE_VENCIMENTO ASC
+                    LIMIT 1");
+                $stMatchVD->execute(array_merge([$valorAbs, $valorAbs], $paramsExcl, [$di, $df, $di, $df, $data]));
                 $match = $stMatchVD->fetch(PDO::FETCH_ASSOC) ?: null;
             }
 
             if ($match) {
-                $idsJaSugeridos[] = (int)$match['id'];
+                // Só "consome" a parcela (impede re-sugerir no lote) quando este
+                // recebimento a quita por completo. Parcial deixa a parcela disponível
+                // para o próximo recebimento do mesmo título.
+                $saldoRestante = (float)$match['valor'] - (float)($match['valor_recebido'] ?? 0);
+                if ($valorAbs + 0.01 >= $saldoRestante) {
+                    $idsJaSugeridos[] = (int)$match['id'];
+                }
                 $totalMatch++;
             } else {
                 $totalOrfaos++;
