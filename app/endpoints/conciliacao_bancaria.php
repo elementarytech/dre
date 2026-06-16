@@ -1235,6 +1235,28 @@ try {
               AND c.COM_DESCRICAO LIKE '%CR_DITO NA CONTA CORRENTE%'
         ")->execute([':banco' => $bancoFk, ':conta' => $contaRef]);
 
+        // ===== Aplicação automática (espelho do resgate) — pareamento (opção B) =====
+        // O "DÉBITO NA CONTA CORRENTE" (-) é a contrapartida da "APLICAÇÃO CONTA
+        // REMUNERADA" (+) de mesmo valor/dia: dinheiro indo da conta para a aplicação
+        // (soma zero), não é despesa. O lado da aplicação (crédito) já vira APLICACAO
+        // pelo regex; aqui marcamos o débito-contrapartida só quando o par existe.
+        $pdo->prepare("
+            UPDATE tb_conciliacao_ofx_movimento c
+            JOIN tb_conciliacao_ofx_movimento a
+              ON a.COM_BANCO_FK = c.COM_BANCO_FK
+             AND a.COM_CONTA_REF = c.COM_CONTA_REF
+             AND a.COM_DATA_MOVIMENTO = c.COM_DATA_MOVIMENTO
+             AND a.COM_VALOR > 0
+             AND ABS(a.COM_VALOR - ABS(c.COM_VALOR)) < 0.01
+             AND a.COM_DESCRICAO LIKE '%APLICA%CONTA REMUNERADA%'
+            SET c.COM_NATUREZA = 'APLICACAO'
+            WHERE c.COM_BANCO_FK = :banco
+              AND c.COM_CONTA_REF = :conta
+              AND c.COM_NATUREZA = 'NORMAL'
+              AND c.COM_VALOR < 0
+              AND c.COM_DESCRICAO LIKE '%D_BITO NA CONTA CORRENTE%'
+        ")->execute([':banco' => $bancoFk, ':conta' => $contaRef]);
+
         $saldoFinalOficial = ($saldoLedgerOfx !== null) ? $saldoLedgerOfx : $saldoAtual;
 
         $stUp = $pdo->prepare("
