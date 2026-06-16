@@ -616,6 +616,38 @@ try {
             json_out(['ok' => false, 'msg' => 'Nenhum item enviado.'], 422);
         }
 
+        // Opção B: diferença de centavos (arredondamento). Sem confirmação
+        // (ajustar_valor=1), pergunta antes de corrigir o valor das parcelas.
+        $ajustarValor = ((int)($_POST['ajustar_valor'] ?? 0)) === 1;
+        if (!$ajustarValor) {
+            $ajustesPendentes = [];
+            foreach ($itens as $it) {
+                $mf  = (int)($it['movimento_fk'] ?? 0);
+                $tp  = strtoupper((string)($it['tipo'] ?? ''));
+                $lid = (int)($it['lancamento_id'] ?? 0);
+                if ($mf <= 0 || $lid <= 0 || !in_array($tp, ['PAGAR', 'RECEBER'], true)) continue;
+                $vm = $pdo->prepare("SELECT ABS(COM_VALOR) v FROM tb_conciliacao_ofx_movimento WHERE COM_CODIGO_PK=?");
+                $vm->execute([$mf]);
+                $va = (float)$vm->fetchColumn();
+                if ($va <= 0) continue;
+                $q = ($tp === 'PAGAR')
+                    ? $pdo->prepare("SELECT CPG_VALOR_PARCELA t, COALESCE(CPG_VALOR_PAGO,0) p FROM tb_contas_pagar WHERE CPG_CODIGO_PK=?")
+                    : $pdo->prepare("SELECT CRE_VALOR t, COALESCE(CRE_VALOR_RECEBIDO,0) p FROM tb_contas_receber WHERE CRE_ID=?");
+                $q->execute([$lid]);
+                $row = $q->fetch(PDO::FETCH_ASSOC);
+                if (!$row) continue;
+                $novo     = round((float)$row['p'] + $va, 2);
+                $residual = round((float)$row['t'] - $novo, 2);
+                if ($residual > 0.0001 && $residual <= 0.05) {
+                    $ajustesPendentes[] = ['tipo' => $tp, 'lancamento_id' => $lid,
+                        'de' => round((float)$row['t'], 2), 'para' => $novo, 'diff' => $residual];
+                }
+            }
+            if (!empty($ajustesPendentes)) {
+                json_out(['ok' => false, 'needs_ajuste' => true, 'ajustes' => $ajustesPendentes]);
+            }
+        }
+
         $sucessos = 0;
         $erros = [];
 
@@ -642,46 +674,10 @@ try {
                 $dataMov  = (string)$mov['COM_DATA_MOVIMENTO'];
                 $bancoFk  = (int)$mov['COM_BANCO_FK'];
 
-                if ($tipo === 'PAGAR') {
-                    $stL = $pdo->prepare("SELECT CPG_STATUS, CPG_OFX_MOVIMENTO_FK
-                                          FROM tb_contas_pagar WHERE CPG_CODIGO_PK = ? LIMIT 1");
-                    $stL->execute([$lancId]);
-                    $lanc = $stL->fetch(PDO::FETCH_ASSOC);
-                    if (!$lanc) throw new Exception('conta a pagar não encontrada');
-                    if ($lanc['CPG_OFX_MOVIMENTO_FK']) throw new Exception('conta já vinculada a outro movimento');
-
-                    if (strtoupper((string)$lanc['CPG_STATUS']) === 'PAGO') {
-                        $pdo->prepare("UPDATE tb_contas_pagar SET CPG_OFX_MOVIMENTO_FK = ? WHERE CPG_CODIGO_PK = ?")
-                            ->execute([$movFk, $lancId]);
-                    } else {
-                        $pdo->prepare("UPDATE tb_contas_pagar
-                                       SET CPG_PAGO = 'SIM', CPG_STATUS = 'PAGO',
-                                           CPG_DATA_PAGAMENTO = ?, CPG_BANCO_PAGAMENTO_FK = ?,
-                                           CPG_VALOR_PAGO = ?, CPG_OFX_MOVIMENTO_FK = ?,
-                                           CPG_AUTORIZACAO_STATUS = COALESCE(CPG_AUTORIZACAO_STATUS, 'AUTORIZADO')
-                                       WHERE CPG_CODIGO_PK = ?")
-                            ->execute([$dataMov, $bancoFk, $valorAbs, $movFk, $lancId]);
-                    }
-                } else {
-                    $stL = $pdo->prepare("SELECT CRE_STATUS, CRE_OFX_MOVIMENTO_FK
-                                          FROM tb_contas_receber WHERE CRE_ID = ? LIMIT 1");
-                    $stL->execute([$lancId]);
-                    $lanc = $stL->fetch(PDO::FETCH_ASSOC);
-                    if (!$lanc) throw new Exception('conta a receber não encontrada');
-                    if ($lanc['CRE_OFX_MOVIMENTO_FK']) throw new Exception('conta já vinculada a outro movimento');
-
-                    if (in_array(strtoupper((string)$lanc['CRE_STATUS']), ['RECEBIDO','PAGO'], true)) {
-                        $pdo->prepare("UPDATE tb_contas_receber SET CRE_OFX_MOVIMENTO_FK = ? WHERE CRE_ID = ?")
-                            ->execute([$movFk, $lancId]);
-                    } else {
-                        $pdo->prepare("UPDATE tb_contas_receber
-                                       SET CRE_STATUS = 'RECEBIDO', CRE_RECEBIDO_EM = ?,
-                                           CRE_BANCO_FK = ?, CRE_VALOR_RECEBIDO = ?,
-                                           CRE_OFX_MOVIMENTO_FK = ?
-                                       WHERE CRE_ID = ?")
-                            ->execute([$dataMov, $bancoFk, $valorAbs, $movFk, $lancId]);
-                    }
-                }
+                // Mesma lógica robusta do vínculo unitário: trata parcial, não rejeita
+                // parcela com FK já setado (incrementa) e aplica o ajuste de centavos
+                // quando autorizado (ajustar_valor=1).
+                aplicarAlocacaoConta($pdo, $tipo, $lancId, $valorAbs, $bancoFk, $dataMov, $movFk, $ajustarValor);
 
                 $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento
                                SET COM_STATUS = 'CONCILIADO', COM_CONCILIADO = 'SIM',

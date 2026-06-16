@@ -2425,8 +2425,26 @@ $hojeTopo = date('d/m/Y');
                 const fd = new FormData();
                 fd.append("acao", "confirmar_vinculos_sugeridos");
                 fd.append("itens", JSON.stringify(sugeridos));
-                const j = await apiPostForm(fd);
+                let j = await apiPostForm(fd);
                 console.log("[confirmarVinculosSugeridos] resposta=", j);
+
+                if (j && !j.ok && j.needs_ajuste) {
+                    const linhas = (j.ajustes || []).map(a =>
+                        `• #${a.lancamento_id}: R$ ${money(a.de)} → <b>R$ ${money(a.para)}</b> (dif. R$ ${money(Math.abs(a.diff))})`
+                    ).join('<br>');
+                    const conf = await Swal.fire({
+                        icon: 'question',
+                        title: 'Ajustar valor da(s) parcela(s)?',
+                        html: `Diferença de arredondamento (poucos centavos) detectada. Para fechar 100%, `
+                            + `o valor da(s) parcela(s) será corrigido:<br><br>${linhas}<br><br>Deseja ajustar e concluir?`,
+                        showCancelButton: true,
+                        confirmButtonText: 'Sim, ajustar e conciliar',
+                        cancelButtonText: 'Cancelar'
+                    });
+                    if (!conf.isConfirmed) return;
+                    fd.append('ajustar_valor', '1');
+                    j = await apiPostForm(fd);
+                }
 
                 if (!j || !j.ok) {
                     showToast((j && j.msg) || "Erro ao confirmar vínculos.", "danger");
