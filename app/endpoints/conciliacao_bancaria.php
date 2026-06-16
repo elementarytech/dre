@@ -1329,9 +1329,10 @@ try {
         $stMov->execute([':banco' => $impBanco, ':conta' => $impConta]);
         $debitos = $stMov->fetchAll(PDO::FETCH_ASSOC);
 
-        // Carrega informações do lançamento encontrado (não só CPG_CODIGO_PK).
-        // Fase B: afrouxa banco (aceita NULL), usa IFNULL(VALOR_PAGO, VALOR_PARCELA)
-        // e exclui contas já vinculadas a outro movimento (evita match cruzado).
+        // Auto-match de débitos: sugere a parcela provável para o pagamento.
+        // Inclui parcelas EM ABERTO (não só pagas), casa o valor com o TOTAL da
+        // parcela OU com o SALDO RESTANTE (pagamento que completa um parcial) e NÃO
+        // trava por banco (o pagamento pode sair de conta diferente da cadastrada).
         $selectMatch = "
             SELECT cp.CPG_CODIGO_PK AS id,
                    cp.CPG_BANCO_PAGAMENTO_FK AS banco_fk,
@@ -1348,10 +1349,11 @@ try {
                    COALESCE(NULLIF(f.FOR_NOME_FANTASIA,''), f.FOR_RAZAO_SOCIAL) AS fornecedor
             FROM tb_contas_pagar cp
             LEFT JOIN tb_fornecedor f ON f.FOR_CODIGO_PK = cp.CPG_FORNECEDOR_FK
-            WHERE (cp.CPG_BANCO_PAGAMENTO_FK = ? OR cp.CPG_BANCO_PAGAMENTO_FK IS NULL)
-              AND cp.CPG_STATUS = 'PAGO'
-              AND ABS(IFNULL(cp.CPG_VALOR_PAGO, cp.CPG_VALOR_PARCELA) - ?) < 0.01
-              AND cp.CPG_OFX_MOVIMENTO_FK IS NULL
+            WHERE UPPER(COALESCE(cp.CPG_STATUS,'')) <> 'CANCELADO'
+              AND (cp.CPG_OFX_MOVIMENTO_FK IS NULL
+                   OR (cp.CPG_VALOR_PAGO > 0 AND cp.CPG_VALOR_PAGO < cp.CPG_VALOR_PARCELA))
+              AND ( ABS(cp.CPG_VALOR_PARCELA - ?) < 0.01
+                 OR ABS((cp.CPG_VALOR_PARCELA - COALESCE(cp.CPG_VALOR_PAGO,0)) - ?) < 0.01 )
         ";
         // sufixos preparados na hora (porque o NOT IN cresce a cada iteração).
 
@@ -1393,8 +1395,10 @@ try {
         foreach ($debitos as $d) {
             $valorAbs = abs((float)$d['COM_VALOR']);
             $data     = (string)$d['COM_DATA_MOVIMENTO'];
-            $di       = (new DateTime($data))->modify('-3 days')->format('Y-m-d 00:00:00');
-            $df       = (new DateTime($data))->modify('+3 days')->format('Y-m-d 23:59:59');
+            // Janela ampla de proximidade (±45 dias): pagamentos podem ser
+            // antecipados/atrasados em relação ao vencimento da parcela.
+            $di       = (new DateTime($data))->modify('-45 days')->format('Y-m-d');
+            $df       = (new DateTime($data))->modify('+45 days')->format('Y-m-d');
 
             $match = null;
 
@@ -1431,17 +1435,25 @@ try {
             $doc = trim((string)$d['COM_DOCUMENTO']);
             if (!$match && $doc !== '') {
                 $stMatchDoc = $pdo->prepare($selectMatch . $exclusao . " AND (cp.CPG_DOCUMENTO = ? OR cp.CPG_NOTA_FISCAL = ?) LIMIT 1");
-                $stMatchDoc->execute(array_merge([(int)$d['COM_BANCO_FK'], $valorAbs], $paramsExcl, [$doc, $doc]));
+                $stMatchDoc->execute(array_merge([$valorAbs, $valorAbs], $paramsExcl, [$doc, $doc]));
                 $match = $stMatchDoc->fetch(PDO::FETCH_ASSOC) ?: null;
             }
             if (!$match) {
-                $stMatchVD = $pdo->prepare($selectMatch . $exclusao . " AND cp.CPG_DATA_PAGAMENTO BETWEEN ? AND ? LIMIT 1");
-                $stMatchVD->execute(array_merge([(int)$d['COM_BANCO_FK'], $valorAbs], $paramsExcl, [$di, $df]));
+                $stMatchVD = $pdo->prepare($selectMatch . $exclusao . "
+                    AND ( (cp.CPG_DATA_PAGAMENTO BETWEEN ? AND ?) OR (cp.CPG_VENCIMENTO BETWEEN ? AND ?) )
+                    ORDER BY ABS(DATEDIFF(COALESCE(cp.CPG_DATA_PAGAMENTO, cp.CPG_VENCIMENTO), ?)) ASC,
+                             cp.CPG_VENCIMENTO ASC
+                    LIMIT 1");
+                $stMatchVD->execute(array_merge([$valorAbs, $valorAbs], $paramsExcl, [$di, $df, $di, $df, $data]));
                 $match = $stMatchVD->fetch(PDO::FETCH_ASSOC) ?: null;
             }
 
             if ($match) {
-                $idsJaSugeridos[] = (int)$match['id'];
+                // Parcial não consome a parcela: só remove do lote quando o pagamento a quita.
+                $saldoRestante = (float)$match['valor'] - (float)($match['valor_pago'] ?? 0);
+                if ($valorAbs + 0.01 >= $saldoRestante) {
+                    $idsJaSugeridos[] = (int)$match['id'];
+                }
                 $totalMatch++;
             } else {
                 $totalOrfaos++;
