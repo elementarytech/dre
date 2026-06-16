@@ -1352,8 +1352,8 @@ try {
             WHERE UPPER(COALESCE(cp.CPG_STATUS,'')) <> 'CANCELADO'
               AND (cp.CPG_OFX_MOVIMENTO_FK IS NULL
                    OR (cp.CPG_VALOR_PAGO > 0 AND cp.CPG_VALOR_PAGO < cp.CPG_VALOR_PARCELA))
-              AND ( ABS(cp.CPG_VALOR_PARCELA - ?) < 0.01
-                 OR ABS((cp.CPG_VALOR_PARCELA - COALESCE(cp.CPG_VALOR_PAGO,0)) - ?) < 0.01 )
+              AND ( ABS(cp.CPG_VALOR_PARCELA - ?) <= 0.05
+                 OR ABS((cp.CPG_VALOR_PARCELA - COALESCE(cp.CPG_VALOR_PAGO,0)) - ?) <= 0.05 )
         ";
         // sufixos preparados na hora (porque o NOT IN cresce a cada iteração).
 
@@ -1707,8 +1707,8 @@ try {
             WHERE UPPER(COALESCE(cr.CRE_STATUS,'')) <> 'CANCELADO'
               AND (cr.CRE_OFX_MOVIMENTO_FK IS NULL
                    OR (cr.CRE_VALOR_RECEBIDO > 0 AND cr.CRE_VALOR_RECEBIDO < cr.CRE_VALOR))
-              AND ( ABS(cr.CRE_VALOR - ?) < 0.01
-                 OR ABS((cr.CRE_VALOR - COALESCE(cr.CRE_VALOR_RECEBIDO,0)) - ?) < 0.01 )
+              AND ( ABS(cr.CRE_VALOR - ?) <= 0.05
+                 OR ABS((cr.CRE_VALOR - COALESCE(cr.CRE_VALOR_RECEBIDO,0)) - ?) <= 0.05 )
         ";
 
         $resultado = [];
