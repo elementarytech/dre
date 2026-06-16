@@ -2155,6 +2155,10 @@ $hojeTopo = date('d/m/Y');
                             <div class="text-muted">
                                 Venc ${vencBr} · R$ ${money(valr)}${m.documento ? ' · doc ' + escapeHtml(m.documento) : ''} · ${escapeHtml(m.status || '')}
                             </div>
+                            <button type="button" class="btn btn-sm btn-link text-danger p-0 mt-1 btn-cancelar-vinc"
+                                    data-mov-fk="${d.movimento_fk}" data-lanc="#${m.id}">
+                                <i class="bi bi-x-circle me-1"></i>Cancelar vínculo (vínculo errado)
+                            </button>
                         </td>
                     </tr>`;
                 }
@@ -2617,6 +2621,10 @@ $hojeTopo = date('d/m/Y');
                             <div class="text-muted">
                                 Venc ${vencBr} · R$ ${money(valr)}${m.documento ? ' · doc ' + escapeHtml(m.documento) : ''} · ${escapeHtml(m.status || '')}
                             </div>
+                            <button type="button" class="btn btn-sm btn-link text-danger p-0 mt-1 btn-cancelar-vinc"
+                                    data-mov-fk="${c.movimento_fk}" data-lanc="#${m.id}">
+                                <i class="bi bi-x-circle me-1"></i>Cancelar vínculo (vínculo errado)
+                            </button>
                         </td>
                     </tr>`;
                 }
@@ -3536,6 +3544,39 @@ $hojeTopo = date('d/m/Y');
                 bootstrap.Modal.getInstance(document.getElementById('modalRevisarVinculos'))?.hide();
                 window.lastImportacaoFk = impFk;
                 await abrirModalCreditosPendentes(impFk);
+                return;
+            }
+
+            // Cancelar um vínculo errado direto na tela de débitos/créditos pendentes.
+            const bCanc = ev.target.closest('.btn-cancelar-vinc');
+            if (bCanc) {
+                const movFk = parseInt(bCanc.dataset.movFk, 10);
+                const lanc  = bCanc.dataset.lanc || '';
+                if (!movFk) return;
+                const conf = await Swal.fire({
+                    icon: 'warning',
+                    title: 'Cancelar este vínculo?',
+                    html: `O vínculo com o lançamento <b>${lanc}</b> será desfeito: a baixa é revertida `
+                        + `e o movimento volta para <b>pendente</b> para você vincular ao correto.<br><br>Confirmar?`,
+                    showCancelButton: true,
+                    confirmButtonText: 'Sim, cancelar vínculo',
+                    cancelButtonText: 'Voltar',
+                    confirmButtonColor: '#dc3545'
+                });
+                if (!conf.isConfirmed) return;
+                const fd = new FormData();
+                fd.append('acao', 'cancelar_integracao');
+                fd.append('movimento_fk', movFk);
+                const j = await apiPostForm(fd);
+                if (!j || !j.ok) { showToast((j && j.msg) || 'Falha ao cancelar vínculo.', 'danger'); return; }
+                showToast('Vínculo cancelado. Movimento voltou para pendente.', 'success');
+                // Recarrega o modal aberto (débitos ou créditos) e os totais.
+                const noDebito = !!ev.target.closest('#dpTbody');
+                const impFk = window.lastImportacaoFk || 0;
+                if (noDebito) await abrirModalDebitosPendentes(impFk);
+                else          await abrirModalCreditosPendentes(impFk);
+                await carregarResumo();
+                await carregarExtrato();
                 return;
             }
         });
