@@ -3363,7 +3363,24 @@ $hojeTopo = date('d/m/Y');
                 fd.append('acao', 'vincular_lancamentos_em_lote');
                 fd.append('movimento_fk', estado.movFk);
                 fd.append('itens', JSON.stringify(estado.alocacoes));
-                const j = await apiPostForm(fd);
+                let j = await apiPostForm(fd);
+                if (!j.ok && j.needs_ajuste) {
+                    const linhas = (j.ajustes || []).map(a =>
+                        `• #${a.lancamento_id}: R$ ${money(a.de)} → <b>R$ ${money(a.para)}</b> (dif. R$ ${money(Math.abs(a.diff))})`
+                    ).join('<br>');
+                    const conf = await Swal.fire({
+                        icon: 'question',
+                        title: 'Ajustar valor da(s) parcela(s)?',
+                        html: `Diferença de arredondamento (poucos centavos) detectada. Para fechar 100%, `
+                            + `o valor da(s) parcela(s) será corrigido:<br><br>${linhas}<br><br>Deseja ajustar e concluir?`,
+                        showCancelButton: true,
+                        confirmButtonText: 'Sim, ajustar e conciliar',
+                        cancelButtonText: 'Cancelar'
+                    });
+                    if (!conf.isConfirmed) { btnConfirmar.disabled = false; return; }
+                    fd.append('ajustar_valor', '1');
+                    j = await apiPostForm(fd);
+                }
                 if (!j.ok) {
                     showToast(j.msg || 'Erro.', 'danger');
                     btnConfirmar.disabled = false;

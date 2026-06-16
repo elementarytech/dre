@@ -2848,6 +2848,34 @@ try {
             ], 422);
         }
 
+        // Opção B: detecta alocações que deixariam diferença de arredondamento (poucos
+        // centavos) na parcela. Sem confirmação (ajustar_valor=1), pede ao usuário.
+        $ajustarValor = ((int)($_POST['ajustar_valor'] ?? 0)) === 1;
+        if (!$ajustarValor) {
+            $ajustesPendentes = [];
+            foreach ($itens as $it) {
+                $tp  = strtoupper((string)($it['tipo'] ?? ''));
+                $lid = (int)($it['lancamento_id'] ?? 0);
+                $va  = abs((float)($it['valor_alocado'] ?? 0));
+                if ($lid <= 0 || $va <= 0 || !in_array($tp, ['PAGAR', 'RECEBER'], true)) continue;
+                $q = ($tp === 'PAGAR')
+                    ? $pdo->prepare("SELECT CPG_VALOR_PARCELA t, COALESCE(CPG_VALOR_PAGO,0) p FROM tb_contas_pagar WHERE CPG_CODIGO_PK=?")
+                    : $pdo->prepare("SELECT CRE_VALOR t, COALESCE(CRE_VALOR_RECEBIDO,0) p FROM tb_contas_receber WHERE CRE_ID=?");
+                $q->execute([$lid]);
+                $row = $q->fetch(PDO::FETCH_ASSOC);
+                if (!$row) continue;
+                $novo     = round((float)$row['p'] + $va, 2);
+                $residual = round((float)$row['t'] - $novo, 2);
+                if ($residual > 0.0001 && $residual <= 0.05) {
+                    $ajustesPendentes[] = ['tipo' => $tp, 'lancamento_id' => $lid,
+                        'de' => round((float)$row['t'], 2), 'para' => $novo, 'diff' => $residual];
+                }
+            }
+            if (!empty($ajustesPendentes)) {
+                json_out(['ok' => false, 'needs_ajuste' => true, 'ajustes' => $ajustesPendentes]);
+            }
+        }
+
         $usuario = (string)($_SESSION['user_nome'] ?? $_SESSION['usuarioSession'] ?? 'Sistema');
 
         $pdo->beginTransaction();
@@ -2878,7 +2906,7 @@ try {
                 $tipoSql = $tipo === 'PAGAR' ? 'CONTA_PAGAR' : 'CONTA_RECEBER';
 
                 // Aplica a alocação primeiro — devolve o tipo real (derivado do saldo restante).
-                $resultado = aplicarAlocacaoConta($pdo, $tipo, $lancId, $valorAloc, $bancoFk, $dataMov, $movFk);
+                $resultado = aplicarAlocacaoConta($pdo, $tipo, $lancId, $valorAloc, $bancoFk, $dataMov, $movFk, $ajustarValor);
 
                 // Grava o vínculo com o tipo REAL, não o que o usuário selecionou no dropdown.
                 $stIns->execute([$movFk, $tipoSql, $lancId, $valorAloc, $resultado['tipo_alocacao_real'], $usuario]);

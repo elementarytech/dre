@@ -118,7 +118,7 @@ if (!function_exists('listarVinculosMovimento')) {
 
 if (!function_exists('aplicarAlocacaoConta')) {
     function aplicarAlocacaoConta(PDO $pdo, string $tipo, int $lancId, float $valorAloc,
-                                  int $bancoFk, string $dataMov, int $movFk): array
+                                  int $bancoFk, string $dataMov, int $movFk, bool $ajustarValor = false): array
     {
         if ($tipo === 'PAGAR') {
             $st = $pdo->prepare("SELECT CPG_VALOR_PARCELA, CPG_VALOR_PAGO, CPG_STATUS, CPG_OFX_MOVIMENTO_FK
@@ -163,6 +163,14 @@ if (!function_exists('aplicarAlocacaoConta')) {
             }
 
             $novoValorPago = $valorPagoAtual + $valorAloc;
+            // Opção B: se sobraria diferença de arredondamento (poucos centavos) e o
+            // ajuste foi autorizado, corrige o valor da parcela para casar com o pago.
+            $residual      = round($valorTotal - $novoValorPago, 2);
+            if ($ajustarValor && $residual > 0.0001 && $residual <= 0.05) {
+                $valorTotal = $novoValorPago;
+                $pdo->prepare("UPDATE tb_contas_pagar SET CPG_VALOR_PARCELA = ? WHERE CPG_CODIGO_PK = ?")
+                    ->execute([$novoValorPago, $lancId]);
+            }
             $quitou        = ($novoValorPago + 0.005 >= $valorTotal);
             $novoStatus    = $quitou ? 'PAGO' : (string)$cp['CPG_STATUS'];
             $tipoAlocReal  = (abs($valorAloc - $saldoRestante) < 0.01) ? 'INTEGRAL' : 'PARCIAL';
@@ -224,6 +232,13 @@ if (!function_exists('aplicarAlocacaoConta')) {
         }
 
         $novoValorRec = $valorRecAtual + $valorAloc;
+        // Opção B: corrige o valor da parcela em diferença de arredondamento autorizada.
+        $residual     = round($valorTotal - $novoValorRec, 2);
+        if ($ajustarValor && $residual > 0.0001 && $residual <= 0.05) {
+            $valorTotal = $novoValorRec;
+            $pdo->prepare("UPDATE tb_contas_receber SET CRE_VALOR = ? WHERE CRE_ID = ?")
+                ->execute([$novoValorRec, $lancId]);
+        }
         $quitou       = ($novoValorRec + 0.005 >= $valorTotal);
         $novoStatus   = $quitou ? 'RECEBIDO' : (string)$cr['CRE_STATUS'];
         $tipoAlocReal = (abs($valorAloc - $saldoRestante) < 0.01) ? 'INTEGRAL' : 'PARCIAL';
