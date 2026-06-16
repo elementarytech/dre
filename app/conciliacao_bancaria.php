@@ -2349,8 +2349,9 @@ $hojeTopo = date('d/m/Y');
                 fd.append("tipo", "PAGAR");
                 fd.append("movimento_fk", v.movimento_fk);
                 fd.append("lancamento_id", v.lancamento_id);
-                const r = await apiPostForm(fd);
-                if (r.ok) okVinc++; else { errVinc++; console.warn("Falha vincular:", r); }
+                let r = await apiPostForm(fd);
+                if (!r.ok && r.needs_ajuste) r = await confirmarAjusteEReenviar(fd, r.ajuste);
+                if (r.ok) okVinc++; else if (!r.cancelado) { errVinc++; console.warn("Falha vincular:", r); }
             }
 
             let okCri = 0;
@@ -2719,6 +2720,25 @@ $hojeTopo = date('d/m/Y');
             });
         }
 
+        // Confirma com o usuário o ajuste de centavos (arredondamento) e reenvia o
+        // vínculo autorizando a correção do valor da parcela (opção B).
+        async function confirmarAjusteEReenviar(fd, a) {
+            const conf = await Swal.fire({
+                icon: 'question',
+                title: 'Ajustar valor da parcela?',
+                html: `O valor conciliado é <b>R$ ${money(a.para)}</b>, mas a parcela #${a.lancamento_id} `
+                    + `está cadastrada como <b>R$ ${money(a.de)}</b> (diferença de `
+                    + `<b>R$ ${money(Math.abs(a.diff))}</b>, provável arredondamento).<br><br>`
+                    + `Deseja <b>corrigir a parcela para R$ ${money(a.para)}</b> e concluir a conciliação?`,
+                showCancelButton: true,
+                confirmButtonText: 'Sim, ajustar e conciliar',
+                cancelButtonText: 'Cancelar'
+            });
+            if (!conf.isConfirmed) return { ok: false, cancelado: true };
+            fd.append('ajustar_valor', '1');
+            return await apiPostForm(fd);
+        }
+
         async function cpLancar() {
             const itensCriar = [];
             const itensVincular = [];
@@ -2761,8 +2781,9 @@ $hojeTopo = date('d/m/Y');
                 fd.append("tipo", "RECEBER");
                 fd.append("movimento_fk", v.movimento_fk);
                 fd.append("lancamento_id", v.lancamento_id);
-                const r = await apiPostForm(fd);
-                if (r.ok) okVinc++; else { errVinc++; console.warn("Falha vincular:", r); }
+                let r = await apiPostForm(fd);
+                if (!r.ok && r.needs_ajuste) r = await confirmarAjusteEReenviar(fd, r.ajuste);
+                if (r.ok) okVinc++; else if (!r.cancelado) { errVinc++; console.warn("Falha vincular:", r); }
             }
 
             let okCri = 0;

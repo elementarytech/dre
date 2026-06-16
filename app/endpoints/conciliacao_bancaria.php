@@ -2153,6 +2153,23 @@ try {
                     // pagamento parcial mesmo quando o 1º já deixou um vínculo legado
                     // (mantém o FK original via $cacheFk).
                     $novoPago      = round($jaPago + $valorAbs, 2);
+                    // Diferença de arredondamento (poucos centavos) que impediria a
+                    // quitação exata: pede confirmação; se autorizado (ajustar_valor=1),
+                    // corrige o valor da parcela para casar com o pago (opção B).
+                    $residual      = round($valorOriginal - $novoPago, 2);
+                    $ajustarValor  = ((int)($_POST['ajustar_valor'] ?? 0)) === 1;
+                    if ($residual > 0.0001 && $residual <= 0.05) {
+                        if (!$ajustarValor) {
+                            $pdo->rollBack();
+                            json_out(['ok' => false, 'needs_ajuste' => true, 'ajuste' => [
+                                'tipo' => 'PAGAR', 'lancamento_id' => $lancId, 'movimento_fk' => $movFk,
+                                'de' => round($valorOriginal, 2), 'para' => $novoPago, 'diff' => $residual,
+                            ]]);
+                        }
+                        $valorOriginal = $novoPago;
+                        $pdo->prepare("UPDATE tb_contas_pagar SET CPG_VALOR_PARCELA = ? WHERE CPG_CODIGO_PK = ?")
+                            ->execute([$novoPago, $lancId]);
+                    }
                     $quitado       = ($novoPago + 0.005) >= $valorOriginal;
                     $venc          = (string)($lanc['CPG_VENCIMENTO'] ?? '');
                     if ($quitado) {
@@ -2205,6 +2222,23 @@ try {
                     // Em aberto/parcial — soma o valor do OFX ao já recebido. Suporta um 2º
                     // recebimento parcial mesmo quando o 1º já deixou um vínculo legado.
                     $novoRecebido  = round($jaRecebido + $valorAbs, 2);
+                    // Diferença de arredondamento (poucos centavos): pede confirmação;
+                    // se autorizado (ajustar_valor=1), corrige o valor da parcela para
+                    // casar com o recebido (opção B).
+                    $residual      = round($valorOriginal - $novoRecebido, 2);
+                    $ajustarValor  = ((int)($_POST['ajustar_valor'] ?? 0)) === 1;
+                    if ($residual > 0.0001 && $residual <= 0.05) {
+                        if (!$ajustarValor) {
+                            $pdo->rollBack();
+                            json_out(['ok' => false, 'needs_ajuste' => true, 'ajuste' => [
+                                'tipo' => 'RECEBER', 'lancamento_id' => $lancId, 'movimento_fk' => $movFk,
+                                'de' => round($valorOriginal, 2), 'para' => $novoRecebido, 'diff' => $residual,
+                            ]]);
+                        }
+                        $valorOriginal = $novoRecebido;
+                        $pdo->prepare("UPDATE tb_contas_receber SET CRE_VALOR = ? WHERE CRE_ID = ?")
+                            ->execute([$novoRecebido, $lancId]);
+                    }
                     $quitado       = ($novoRecebido + 0.005) >= $valorOriginal;
                     $venc          = (string)($lanc['CRE_VENCIMENTO'] ?? '');
                     if ($quitado) {
