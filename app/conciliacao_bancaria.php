@@ -3611,14 +3611,15 @@ $hojeTopo = date('d/m/Y');
             // Cancelar um vínculo errado direto na tela de débitos/créditos pendentes.
             const bCanc = ev.target.closest('.btn-cancelar-vinc');
             if (bCanc) {
-                const movFk = parseInt(bCanc.dataset.movFk, 10);
-                const lanc  = bCanc.dataset.lanc || '';
+                const movFk    = parseInt(bCanc.dataset.movFk, 10);
+                const lanc     = bCanc.dataset.lanc || '';
+                const noDebito = !!bCanc.closest('#dpTbody');   // captura ANTES de qualquer re-render
                 if (!movFk) return;
                 const conf = await Swal.fire({
                     icon: 'warning',
                     title: 'Cancelar este vínculo?',
                     html: `O vínculo com o lançamento <b>${lanc}</b> será desfeito: a baixa é revertida `
-                        + `e o movimento volta para <b>pendente</b> para você vincular ao correto.<br><br>Confirmar?`,
+                        + `e o movimento fica <b>sem vínculo</b> aqui mesmo, para você escolher o correto.<br><br>Confirmar?`,
                     showCancelButton: true,
                     confirmButtonText: 'Sim, cancelar vínculo',
                     cancelButtonText: 'Voltar',
@@ -3630,12 +3631,32 @@ $hojeTopo = date('d/m/Y');
                 fd.append('movimento_fk', movFk);
                 const j = await apiPostForm(fd);
                 if (!j || !j.ok) { showToast((j && j.msg) || 'Falha ao cancelar vínculo.', 'danger'); return; }
-                showToast('Vínculo cancelado. Movimento voltou para pendente.', 'success');
-                // Recarrega o modal aberto (débitos ou créditos) e os totais.
-                const noDebito = !!ev.target.closest('#dpTbody');
-                const impFk = window.lastImportacaoFk || 0;
-                if (noDebito) await abrirModalDebitosPendentes(impFk);
-                else          await abrirModalCreditosPendentes(impFk);
+
+                // Transforma a linha em "sem vínculo" AQUI mesmo (sem recarregar o
+                // modal, que re-sugeriria o mesmo lançamento errado). Mantém o
+                // campo de busca para escolher o correto.
+                const arr = noDebito ? dpDebitos : cpCreditos;
+                const item = Array.isArray(arr) ? arr.find(x => Number(x.movimento_fk) === movFk) : null;
+                if (item) {
+                    item.match = null; // marca como órfão/sem vínculo
+                    const mes  = String(item.data || '').substring(0, 7);
+                    const tipo = noDebito ? 'PAGAR' : 'RECEBER';
+                    const cache = noDebito ? dpLancMes : cpLancMes;
+                    if (mes && !cache[mes]) {
+                        try {
+                            const m = await carregarLancamentosMes(tipo, [item.data], item.banco_fk || 0);
+                            Object.assign(cache, m);
+                        } catch (e) { /* a busca no servidor cobre se faltar */ }
+                    }
+                    if (noDebito) dpRenderTabela(); else cpRenderTabela();
+                    showToast('Vínculo cancelado. Agora escolha o lançamento correto nesta linha.', 'success');
+                } else {
+                    // fallback: se não achou em memória, recarrega
+                    const impFk = window.lastImportacaoFk || 0;
+                    if (noDebito) await abrirModalDebitosPendentes(impFk);
+                    else          await abrirModalCreditosPendentes(impFk);
+                    showToast('Vínculo cancelado.', 'success');
+                }
                 await carregarResumo();
                 await carregarExtrato();
                 return;
