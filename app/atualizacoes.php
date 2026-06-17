@@ -5,9 +5,57 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/config/auth.php';
+require_once __DIR__ . '/config/conexao.php';
 
 $__userNome   = (string)($_SESSION['user_nome'] ?? 'Usuário');
 $__userPerfil = (string)($_SESSION['user_perfil'] ?? 'USER');
+
+// ====================================================================
+// API JSON: validações COMPARTILHADAS (banco de dados, não localStorage).
+// ====================================================================
+$__acao = (string)($_GET['acao'] ?? $_POST['acao'] ?? '');
+
+if ($__acao === 'listar_validacoes') {
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        $rows = $pdo->query("SELECT AV_ATUALIZACAO, AV_ITEM, AV_USUARIO, AV_VALIDADO_EM
+                             FROM tb_atualizacao_validacao")->fetchAll(PDO::FETCH_ASSOC);
+        $out = [];
+        foreach ($rows as $r) {
+            $out[$r['AV_ATUALIZACAO'] . '|' . $r['AV_ITEM']] = [
+                'usuario' => $r['AV_USUARIO'],
+                'em'      => $r['AV_VALIDADO_EM'] ? date('d/m/Y', strtotime((string)$r['AV_VALIDADO_EM'])) : '',
+            ];
+        }
+        echo json_encode(['ok' => true, 'marcados' => $out], JSON_UNESCAPED_UNICODE);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'msg' => $e->getMessage()]);
+    }
+    exit;
+}
+
+if ($__acao === 'marcar_validacao') {
+    header('Content-Type: application/json; charset=utf-8');
+    $atu   = trim((string)($_POST['atualizacao'] ?? ''));
+    $item  = (int)($_POST['item'] ?? -1);
+    $valor = (string)($_POST['valor'] ?? '0') === '1';
+    if ($atu === '' || $item < 0) { echo json_encode(['ok' => false, 'msg' => 'Parâmetros inválidos.']); exit; }
+    try {
+        if ($valor) {
+            $st = $pdo->prepare("INSERT INTO tb_atualizacao_validacao (AV_ATUALIZACAO, AV_ITEM, AV_USUARIO)
+                                 VALUES (?, ?, ?)
+                                 ON DUPLICATE KEY UPDATE AV_USUARIO = VALUES(AV_USUARIO), AV_VALIDADO_EM = NOW()");
+            $st->execute([$atu, $item, $__userNome]);
+        } else {
+            $pdo->prepare("DELETE FROM tb_atualizacao_validacao WHERE AV_ATUALIZACAO = ? AND AV_ITEM = ?")
+                ->execute([$atu, $item]);
+        }
+        echo json_encode(['ok' => true, 'usuario' => $__userNome, 'em' => date('d/m/Y')]);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'msg' => $e->getMessage()]);
+    }
+    exit;
+}
 
 // ====================================================================
 // Catálogo de atualizações (mais recente primeiro). Cada uma tem um
@@ -229,73 +277,100 @@ function ax_badge_status(string $s): string {
     <?php include __DIR__ . '/includes/scripts.php'; ?>
     <script src="assets/session_keeper.js" defer></script>
     <script>
-        const AX_KEY = 'sync-atualizacoes-validacao-v1';
-        function axLoad() { try { return JSON.parse(localStorage.getItem(AX_KEY) || '{}'); } catch (e) { return {}; } }
-        function axSave(o) { localStorage.setItem(AX_KEY, JSON.stringify(o)); }
+        // Validações COMPARTILHADAS (servidor). AX_STATE = { "id|item": {usuario, em} }.
+        const AX_URL = location.pathname;
+        let AX_STATE = {};
+        let ckAtual = null;
         function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-        let ckAtual = null;
+        async function axCarregar() {
+            try {
+                const r = await fetch(AX_URL + '?acao=listar_validacoes', { credentials: 'same-origin' });
+                const j = await r.json();
+                if (j && j.ok) { AX_STATE = j.marcados || {}; }
+            } catch (e) { console.warn('Falha ao carregar validações', e); }
+            axRefreshCards();
+            if (ckAtual) renderCheck(ckAtual);
+        }
+
+        async function axMarcar(atualizacao, item, valor) {
+            const fd = new FormData();
+            fd.append('acao', 'marcar_validacao');
+            fd.append('atualizacao', atualizacao);
+            fd.append('item', item);
+            fd.append('valor', valor ? '1' : '0');
+            const r = await fetch(AX_URL, { method: 'POST', body: fd, credentials: 'same-origin' });
+            return r.json();
+        }
+
+        function renderCheck(a) {
+            const lista = document.getElementById('ckLista');
+            lista.innerHTML = a.itens.map((it, i) => {
+                const info = AX_STATE[a.id + '|' + i];
+                const marc = !!info;
+                const quem = marc && info.usuario ? `<div class="text-muted" style="font-size:.72rem;margin-top:2px"><i class="fa-solid fa-check text-success me-1"></i>validado por ${esc(info.usuario)}${info.em ? ' em ' + esc(info.em) : ''}</div>` : '';
+                return `<div class="ck-item ${marc ? 'done' : ''}">
+                    <input type="checkbox" data-atu="${esc(a.id)}" data-item="${i}" ${marc ? 'checked' : ''}>
+                    <label>${it.t ? `<span class="ck-tag">${esc(it.t)}</span>` : ''}${esc(it.d)}${quem}</label>
+                </div>`;
+            }).join('');
+            lista.querySelectorAll('input[type=checkbox]').forEach(cb => {
+                cb.addEventListener('change', async () => {
+                    cb.disabled = true;
+                    const atu = cb.dataset.atu, item = parseInt(cb.dataset.item, 10), val = cb.checked;
+                    const j = await axMarcar(atu, item, val);
+                    if (j && j.ok) {
+                        if (val) AX_STATE[atu + '|' + item] = { usuario: j.usuario, em: j.em };
+                        else delete AX_STATE[atu + '|' + item];
+                        renderCheck(ckAtual); ckRefresh(); axRefreshCards();
+                    } else {
+                        cb.checked = !val;
+                        if (window.Swal) Swal.fire({ icon: 'error', title: 'Erro ao salvar', text: (j && j.msg) || 'Tente novamente.' });
+                    }
+                    cb.disabled = false;
+                });
+            });
+            ckRefresh();
+        }
 
         function abrirChecklist(a) {
             ckAtual = a;
             document.getElementById('ckTitulo').textContent = a.titulo;
-            const estado = axLoad();
-            const lista = document.getElementById('ckLista');
-            lista.innerHTML = a.itens.map((it, i) => {
-                const key = a.id + '|' + i;
-                const marc = !!estado[key];
-                return `<div class="ck-item ${marc ? 'done' : ''}">
-                    <input type="checkbox" data-key="${esc(key)}" ${marc ? 'checked' : ''}>
-                    <label>${it.t ? `<span class="ck-tag">${esc(it.t)}</span>` : ''}${esc(it.d)}</label>
-                </div>`;
-            }).join('');
-            lista.querySelectorAll('input[type=checkbox]').forEach(cb => {
-                cb.addEventListener('change', () => {
-                    const o = axLoad();
-                    if (cb.checked) o[cb.dataset.key] = true; else delete o[cb.dataset.key];
-                    axSave(o);
-                    cb.closest('.ck-item').classList.toggle('done', cb.checked);
-                    ckRefresh();
-                    axRefreshCards();
-                });
-            });
-            ckRefresh();
+            renderCheck(a);
             bootstrap.Modal.getOrCreateInstance(document.getElementById('modalChecklist')).show();
         }
 
         function ckRefresh() {
             if (!ckAtual) return;
-            const estado = axLoad();
             const total = ckAtual.itens.length;
-            const done = ckAtual.itens.filter((_, i) => estado[ckAtual.id + '|' + i]).length;
+            const done = ckAtual.itens.filter((_, i) => AX_STATE[ckAtual.id + '|' + i]).length;
             document.getElementById('ckContador').textContent = `${done} de ${total} validados`;
             document.getElementById('ckBar').style.width = (total ? done / total * 100 : 0) + '%';
         }
 
-        document.getElementById('ckLimpar').addEventListener('click', () => {
+        document.getElementById('ckLimpar').addEventListener('click', async () => {
             if (!ckAtual) return;
-            const o = axLoad();
-            ckAtual.itens.forEach((_, i) => delete o[ckAtual.id + '|' + i]);
-            axSave(o);
-            document.querySelectorAll('#ckLista input[type=checkbox]').forEach(cb => { cb.checked = false; cb.closest('.ck-item').classList.remove('done'); });
-            ckRefresh();
-            axRefreshCards();
+            const r = await Swal.fire({ icon: 'warning', title: 'Limpar validações desta atualização?', showCancelButton: true, confirmButtonText: 'Sim, limpar', cancelButtonText: 'Cancelar' });
+            if (!r.isConfirmed) return;
+            for (let i = 0; i < ckAtual.itens.length; i++) {
+                if (AX_STATE[ckAtual.id + '|' + i]) { await axMarcar(ckAtual.id, i, false); delete AX_STATE[ckAtual.id + '|' + i]; }
+            }
+            renderCheck(ckAtual); ckRefresh(); axRefreshCards();
         });
 
-        // Atualiza as barrinhas de progresso de cada card na listagem.
+        // Barrinhas de progresso de cada card na listagem.
         function axRefreshCards() {
-            const estado = axLoad();
             document.querySelectorAll('[data-prog-bar]').forEach(bar => {
                 const id = bar.getAttribute('data-prog-bar');
                 const totalEl = document.querySelector(`[data-prog-label="${id}"]`);
                 const total = parseInt((totalEl?.textContent || '0/0').split('/')[1], 10) || 0;
                 let done = 0;
-                for (let i = 0; i < total; i++) if (estado[id + '|' + i]) done++;
+                for (let i = 0; i < total; i++) if (AX_STATE[id + '|' + i]) done++;
                 bar.style.width = (total ? done / total * 100 : 0) + '%';
                 if (totalEl) totalEl.textContent = `${done}/${total}`;
             });
         }
-        document.addEventListener('DOMContentLoaded', axRefreshCards);
+        document.addEventListener('DOMContentLoaded', axCarregar);
     </script>
 </body>
 </html>
