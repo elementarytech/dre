@@ -71,6 +71,7 @@ if (!function_exists('__sideLink')) {
 
             <?= __sideLink($__rel.'usuarios.php',    'fa-solid fa-users',     'Usuários',      $__curFile) ?>
             <?= __sideLink($__rel.'meu_perfil.php',  'fa-solid fa-id-card',   'Meu Perfil',    $__curFile) ?>
+            <?= __sideLink($__rel.'atualizacoes.php','fa-solid fa-rotate',    'Atualizações',  $__curFile) ?>
             <?= __sideLink($__rel.'configuracoes.php','fa-solid fa-gear',     'Configurações', $__curFile) ?>
 
         </ul>
