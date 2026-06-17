@@ -2141,7 +2141,7 @@ $hojeTopo = date('d/m/Y');
                     const valr = (m.valor_pago || m.valor || 0);
                     return `
                     <tr data-idx="${i}" data-matched="1" style="background:#e8f7ee">
-                        <td><i class="bi bi-check-circle-fill text-success"></i></td>
+                        <td><input type="checkbox" class="sug-chk" data-mov-fk="${d.movimento_fk}" data-lanc="${m.id}" checked title="Desmarque para NÃO confirmar este vínculo"></td>
                         <td class="text-nowrap small">${formatDate(d.data)}</td>
                         <td class="small">
                             <div class="fw-semibold">${escapeHtml(d.descricao || '-')}</div>
@@ -2382,26 +2382,26 @@ $hojeTopo = date('d/m/Y');
         async function confirmarVinculosSugeridos(tipo) {
             try {
                 console.log("[confirmarVinculosSugeridos] iniciado, tipo=", tipo);
-                const fonte = tipo === "PAGAR" ? (dpDebitos || []) : (cpCreditos || []);
-                console.log("[confirmarVinculosSugeridos] fonte length=", fonte.length, "amostra=", fonte.slice(0, 2));
 
-                // Aceita match.id ou match.CPG_CODIGO_PK ou match.CRE_ID (defensivo)
-                const sugeridos = fonte
-                    .filter(d => {
-                        if (!d.match) return false;
-                        const id = d.match.id || d.match.CPG_CODIGO_PK || d.match.CRE_ID || d.match.lancamento_id;
-                        return id && Number(id) > 0;
-                    })
-                    .map(d => ({
-                        movimento_fk: d.movimento_fk,
+                // Lê APENAS as linhas sugeridas que estão MARCADAS (o usuário pode
+                // desmarcar as que identificar como erradas e confirmar só as certas).
+                const tbodyId = tipo === "PAGAR" ? "dpTbody" : "cpTbody";
+                const tbody = document.getElementById(tbodyId);
+                const sugeridos = Array.from(tbody ? tbody.querySelectorAll(".sug-chk:checked") : [])
+                    .map(chk => ({
+                        movimento_fk: Number(chk.dataset.movFk),
                         tipo: tipo,
-                        lancamento_id: Number(d.match.id || d.match.CPG_CODIGO_PK || d.match.CRE_ID || d.match.lancamento_id),
-                    }));
+                        lancamento_id: Number(chk.dataset.lanc),
+                    }))
+                    .filter(s => s.movimento_fk > 0 && s.lancamento_id > 0);
 
-                console.log("[confirmarVinculosSugeridos] sugeridos=", sugeridos);
+                console.log("[confirmarVinculosSugeridos] sugeridos marcados=", sugeridos);
 
+                const totalSug = tbody ? tbody.querySelectorAll(".sug-chk").length : 0;
                 if (!sugeridos.length) {
-                    showToast("Nenhum vínculo sugerido para confirmar. Confira o console (F12) para detalhes.", "warning");
+                    showToast(totalSug
+                        ? "Nenhum vínculo marcado. Marque ao menos um para confirmar."
+                        : "Nenhum vínculo sugerido para confirmar.", "warning");
                     return;
                 }
 
@@ -2607,7 +2607,7 @@ $hojeTopo = date('d/m/Y');
                     const valr = (m.valor_recebido || m.valor || 0);
                     return `
                     <tr data-idx="${i}" data-matched="1" style="background:#e8f7ee">
-                        <td><i class="bi bi-check-circle-fill text-success"></i></td>
+                        <td><input type="checkbox" class="sug-chk" data-mov-fk="${c.movimento_fk}" data-lanc="${m.id}" checked title="Desmarque para NÃO confirmar este vínculo"></td>
                         <td class="text-nowrap small">${formatDate(c.data)}</td>
                         <td class="small">
                             <div class="fw-semibold">${escapeHtml(c.descricao || '-')}</div>
