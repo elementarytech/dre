@@ -2071,6 +2071,81 @@ $hojeTopo = date('d/m/Y');
             });
         }
 
+        // Autocomplete VISÍVEL da busca inline de vínculo: ao digitar mostra uma lista
+        // de resultados (lista do mês + busca no servidor) e ao clicar seleciona o
+        // lançamento no <select> (fonte de verdade pro "Lançar selecionados").
+        function bindVincBuscaInline(tr, tipo) {
+            const inpB = tr.querySelector('[class*="row-vinc-busca"]');
+            const sel  = tr.querySelector('[class*="row-vinc-fk"]');
+            const box  = tr.querySelector('[class*="vinc-results"]');
+            if (!inpB || !sel || !box) return;
+
+            const fecha = () => { box.classList.add('d-none'); box.innerHTML = ''; };
+            const escolher = (id, label) => {
+                sel.value = id;
+                sel.dispatchEvent(new Event('change'));
+                inpB.value = label;
+                fecha();
+            };
+            const montar = (termo, extras) => {
+                const vistos = new Set();
+                const itens = [];
+                sel.querySelectorAll('option[data-search]').forEach(opt => {
+                    if (!opt.value) return;
+                    if (!termo || (opt.dataset.search || '').indexOf(termo) >= 0) {
+                        vistos.add(String(opt.value));
+                        itens.push({ id: String(opt.value), label: opt.textContent });
+                    }
+                });
+                (extras || []).forEach(it => {
+                    if (!vistos.has(String(it.id))) { vistos.add(String(it.id)); itens.push(it); }
+                });
+                if (!itens.length) {
+                    box.innerHTML = '<div class="px-2 py-1 text-muted">Nenhum lançamento encontrado.</div>';
+                } else {
+                    box.innerHTML = itens.slice(0, 40).map(it =>
+                        `<div class="vinc-item px-2 py-1 border-bottom" data-id="${it.id}" data-label="${escapeAttr(it.label)}" style="cursor:pointer">${escapeHtml(it.label)}</div>`
+                    ).join('');
+                }
+                box.classList.remove('d-none');
+            };
+
+            let timer = null;
+            inpB.addEventListener('input', () => {
+                const termo = pmNormalizar(inpB.value);
+                montar(termo, []); // imediato: lista do mês
+                clearTimeout(timer);
+                if (termo.length >= 2) {
+                    timer = setTimeout(async () => {
+                        const rows = await buscarLancServidor(tipo, inpB.value.trim(), 0, 0);
+                        const extras = [];
+                        rows.forEach(r => {
+                            if (!sel.querySelector('option[value="' + r.id + '"]')) {
+                                sel.insertAdjacentHTML('beforeend', inlineBuildOption(tipo, r));
+                            }
+                            extras.push({ id: String(r.id), label: lancOptionLabel(tipo, r) });
+                        });
+                        montar(pmNormalizar(inpB.value), extras);
+                    }, 350);
+                }
+            });
+            inpB.addEventListener('focus', () => { if (inpB.value.trim()) montar(pmNormalizar(inpB.value), []); });
+            inpB.addEventListener('keydown', (ev) => {
+                if (ev.key !== 'Enter') return;
+                ev.preventDefault();
+                const first = box.querySelector('.vinc-item');
+                if (first) escolher(first.dataset.id, first.dataset.label);
+            });
+            // mousedown (antes do blur) para não fechar antes de capturar o clique
+            box.addEventListener('mousedown', (ev) => {
+                const it = ev.target.closest('.vinc-item');
+                if (!it) return;
+                ev.preventDefault();
+                escolher(it.dataset.id, it.dataset.label);
+            });
+            inpB.addEventListener('blur', () => setTimeout(fecha, 200));
+        }
+
         async function abrirModalDebitosPendentes(importacaoFk) {
             const j = await apiGet({ acao: "debitos_orfaos", importacao_fk: importacaoFk });
             if (!j.ok) {
@@ -2179,7 +2254,10 @@ $hojeTopo = date('d/m/Y');
                     </td>
                     <td class="text-end mono small">R$ ${money(d.valor)}</td>
                     <td>
-                        <input type="text" class="form-control form-control-sm dp-row-vinc-busca mb-1" placeholder="🔍 Filtrar por nome, valor, #ID…" autocomplete="off">
+                        <div class="position-relative">
+                            <input type="text" class="form-control form-control-sm dp-row-vinc-busca mb-1" placeholder="🔍 Buscar por nome, valor, #ID…" autocomplete="off">
+                            <div class="dp-vinc-results bg-white border rounded shadow-sm position-absolute w-100 d-none" style="z-index:1085;max-height:220px;overflow:auto;font-size:12px"></div>
+                        </div>
                         <select class="form-select form-select-sm dp-row-vinc-fk" title="${lancList.length} lançamento(s) sem vínculo (mês ${mesD} ± 1)">
                             ${lancOpts}
                         </select>
@@ -2216,30 +2294,8 @@ $hojeTopo = date('d/m/Y');
                 });
             });
 
-            // busca/filtro do select de vincular: filtra options por nome, valor e #ID
-            tb.querySelectorAll('tr[data-matched="0"]').forEach(tr => {
-                const inpB = tr.querySelector('.dp-row-vinc-busca');
-                const sel = tr.querySelector('.dp-row-vinc-fk');
-                if (!inpB || !sel) return;
-                let dpBuscaTimer = null;
-                inpB.addEventListener('input', () => {
-                    const termo = pmNormalizar(inpB.value);
-                    sel.querySelectorAll('option[data-search]').forEach(opt => {
-                        opt.hidden = !!termo && (opt.dataset.search || '').indexOf(termo) < 0;
-                    });
-                    const optSel = sel.options[sel.selectedIndex];
-                    if (optSel && optSel.hidden) { sel.value = ''; sel.dispatchEvent(new Event('change')); }
-                    clearTimeout(dpBuscaTimer);
-                    dpBuscaTimer = setTimeout(() => inlineBuscaRemota('PAGAR', inpB, sel), 350);
-                });
-                // Enter seleciona a 1ª option visível
-                inpB.addEventListener('keydown', (ev) => {
-                    if (ev.key !== 'Enter') return;
-                    ev.preventDefault();
-                    const first = Array.from(sel.querySelectorAll('option[data-search]')).find(o => !o.hidden);
-                    if (first) { sel.value = first.value; sel.dispatchEvent(new Event('change')); }
-                });
-            });
+            // busca de vínculo: autocomplete visível (lista do mês + servidor)
+            tb.querySelectorAll('tr[data-matched="0"]').forEach(tr => bindVincBuscaInline(tr, 'PAGAR'));
 
             // autocomplete fornecedor por linha (apenas linhas órfãs)
             tb.querySelectorAll('tr[data-matched="0"]').forEach(tr => {
@@ -2645,7 +2701,10 @@ $hojeTopo = date('d/m/Y');
                     </td>
                     <td class="text-end mono small">R$ ${money(c.valor)}</td>
                     <td>
-                        <input type="text" class="form-control form-control-sm cp-row-vinc-busca mb-1" placeholder="🔍 Filtrar por nome, valor, #ID…" autocomplete="off">
+                        <div class="position-relative">
+                            <input type="text" class="form-control form-control-sm cp-row-vinc-busca mb-1" placeholder="🔍 Buscar por nome, valor, #ID…" autocomplete="off">
+                            <div class="cp-vinc-results bg-white border rounded shadow-sm position-absolute w-100 d-none" style="z-index:1085;max-height:220px;overflow:auto;font-size:12px"></div>
+                        </div>
                         <select class="form-select form-select-sm cp-row-vinc-fk" title="${lancListC.length} lançamento(s) sem vínculo (mês ${mesC} ± 1)">
                             ${lancOptsC}
                         </select>
@@ -2720,30 +2779,8 @@ $hojeTopo = date('d/m/Y');
                 });
             });
 
-            // busca/filtro do select de vincular: filtra options por nome, valor e #ID
-            tb.querySelectorAll('tr[data-matched="0"]').forEach(tr => {
-                const inpB = tr.querySelector('.cp-row-vinc-busca');
-                const sel = tr.querySelector('.cp-row-vinc-fk');
-                if (!inpB || !sel) return;
-                let cpBuscaTimer = null;
-                inpB.addEventListener('input', () => {
-                    const termo = pmNormalizar(inpB.value);
-                    sel.querySelectorAll('option[data-search]').forEach(opt => {
-                        opt.hidden = !!termo && (opt.dataset.search || '').indexOf(termo) < 0;
-                    });
-                    const optSel = sel.options[sel.selectedIndex];
-                    if (optSel && optSel.hidden) { sel.value = ''; sel.dispatchEvent(new Event('change')); }
-                    clearTimeout(cpBuscaTimer);
-                    cpBuscaTimer = setTimeout(() => inlineBuscaRemota('RECEBER', inpB, sel), 350);
-                });
-                // Enter seleciona a 1ª option visível
-                inpB.addEventListener('keydown', (ev) => {
-                    if (ev.key !== 'Enter') return;
-                    ev.preventDefault();
-                    const first = Array.from(sel.querySelectorAll('option[data-search]')).find(o => !o.hidden);
-                    if (first) { sel.value = first.value; sel.dispatchEvent(new Event('change')); }
-                });
-            });
+            // busca de vínculo: autocomplete visível (lista do mês + servidor)
+            tb.querySelectorAll('tr[data-matched="0"]').forEach(tr => bindVincBuscaInline(tr, 'RECEBER'));
         }
 
         // Confirma com o usuário o ajuste de centavos (arredondamento) e reenvia o
