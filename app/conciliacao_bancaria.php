@@ -927,7 +927,7 @@ $hojeTopo = date('d/m/Y');
                 <div class="modal-header" style="background:#0f172a;color:#fff">
                     <div>
                         <h5 class="modal-title fw-bold mb-1">
-                            <i class="bi bi-receipt-cutoff me-2"></i>Débitos do extrato sem lançamento no contas a pagar
+                            <i class="bi bi-arrow-down-circle me-2"></i>Débitos do extrato sem lançamento no contas a pagar
                         </h5>
                         <p class="mb-0" style="font-size:12px;color:rgba(255,255,255,.7)">
                             Selecione os débitos que devem virar lançamentos pagos no contas a pagar.
@@ -1001,7 +1001,7 @@ $hojeTopo = date('d/m/Y');
                 <div class="modal-header" style="background:#0f172a;color:#fff">
                     <div>
                         <h5 class="modal-title fw-bold mb-1">
-                            <i class="bi bi-arrow-down-circle me-2"></i>Créditos do extrato sem lançamento no contas a receber
+                            <i class="bi bi-arrow-up-circle me-2"></i>Créditos do extrato sem lançamento no contas a receber
                         </h5>
                         <p class="mb-0" style="font-size:12px;color:rgba(255,255,255,.7)">
                             Selecione os créditos que devem virar lançamentos recebidos no contas a receber.
@@ -3578,10 +3578,10 @@ $hojeTopo = date('d/m/Y');
                         <td class="small text-muted">${r.data_cadastro ? formatDateBR(r.data_cadastro) : '—'}</td>
                         <td class="text-end">
                             <button class="btn btn-sm btn-outline-danger" data-rv-deb="${r.imp_id}" ${podeRevisarD ? '' : 'disabled'} title="Revisar débitos pendentes">
-                                <i class="bi bi-arrow-up-right"></i>
+                                <i class="bi bi-arrow-down-right"></i>
                             </button>
                             <button class="btn btn-sm btn-outline-success" data-rv-cred="${r.imp_id}" ${podeRevisarC ? '' : 'disabled'} title="Revisar créditos pendentes">
-                                <i class="bi bi-arrow-down-right"></i>
+                                <i class="bi bi-arrow-up-right"></i>
                             </button>
                         </td>
                     </tr>
