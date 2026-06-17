@@ -147,6 +147,47 @@ require_once __DIR__ . '/config/auth.php'; // exige login
                             </div>
                         </div>
                     </div>
+                    <!-- Atualizar Sistema -->
+                    <div class="col-sm-6 col-md-4 col-lg-3">
+                        <div class="card shadow-sm border-0 h-100 settings-card">
+                            <div class="card-body d-flex flex-column">
+                                <div class="mb-3">
+                                    <i class="fa-solid fa-code-branch fa-2x mb-2 text-success"></i>
+                                    <h6 class="mb-1">Atualizar Sistema</h6>
+                                    <p class="text-muted small mb-0">
+                                        Baixa as últimas alterações do repositório Git (git pull).
+                                    </p>
+                                </div>
+                                <div class="mt-auto">
+                                    <button id="btnGitPull" class="btn btn-sm btn-outline-success w-100">
+                                        <i class="fa-solid fa-arrow-down me-1"></i>Fazer Pull
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Resultado do git pull -->
+                <div id="gitPullResult" class="mt-3" style="display:none;">
+                    <div id="gitPullAlert" class="alert mb-0">
+                        <div id="gitPullLoading" style="display:none;">
+                            <div class="d-flex align-items-center gap-2">
+                                <div class="spinner-border spinner-border-sm" role="status"></div>
+                                <span>Executando git pull…</span>
+                            </div>
+                            <div class="progress mt-2" style="height:4px;">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated w-100 bg-success"></div>
+                            </div>
+                        </div>
+                        <div id="gitPullOutput" style="display:none;">
+                            <div class="d-flex align-items-center gap-2 mb-1">
+                                <i id="gitPullIcon" class="fa-solid fa-lg"></i>
+                                <strong id="gitPullTitle"></strong>
+                            </div>
+                            <pre id="gitPullPre" class="mb-0 mt-2 small bg-dark text-white rounded p-2" style="white-space:pre-wrap;max-height:200px;overflow-y:auto;display:none;"></pre>
+                        </div>
+                    </div>
                 </div>
 
                 <footer class="text-muted small mt-4">
@@ -171,6 +212,61 @@ require_once __DIR__ . '/config/auth.php'; // exige login
             if (elAno) elAno.textContent = String(now.getFullYear());
         })();
     </script>
+
+    <script>
+        document.getElementById('btnGitPull').addEventListener('click', function () {
+            const btn        = this;
+            const wrap       = document.getElementById('gitPullResult');
+            const alert      = document.getElementById('gitPullAlert');
+            const loading    = document.getElementById('gitPullLoading');
+            const output     = document.getElementById('gitPullOutput');
+            const icon       = document.getElementById('gitPullIcon');
+            const title      = document.getElementById('gitPullTitle');
+            const pre        = document.getElementById('gitPullPre');
+
+            btn.disabled = true;
+            wrap.style.display = 'block';
+            alert.className = 'alert alert-secondary mb-0';
+            loading.style.display = 'block';
+            output.style.display  = 'none';
+
+            fetch('endpoints/git_pull.php', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    loading.style.display = 'none';
+                    output.style.display  = 'block';
+
+                    if (data.ok && data.up_to_date) {
+                        alert.className = 'alert alert-info mb-0';
+                        icon.className  = 'fa-solid fa-circle-check fa-lg text-info';
+                        title.textContent = 'Sistema já está atualizado.';
+                        pre.style.display = 'none';
+                    } else if (data.ok) {
+                        alert.className = 'alert alert-success mb-0';
+                        icon.className  = 'fa-solid fa-circle-check fa-lg text-success';
+                        title.textContent = 'Pull realizado com sucesso!';
+                        pre.textContent   = data.output;
+                        pre.style.display = 'block';
+                    } else {
+                        alert.className = 'alert alert-danger mb-0';
+                        icon.className  = 'fa-solid fa-circle-xmark fa-lg text-danger';
+                        title.textContent = 'Erro ao executar git pull.';
+                        pre.textContent   = data.output || data.msg;
+                        pre.style.display = 'block';
+                    }
+                })
+                .catch(() => {
+                    loading.style.display = 'none';
+                    output.style.display  = 'block';
+                    alert.className = 'alert alert-danger mb-0';
+                    icon.className  = 'fa-solid fa-circle-xmark fa-lg text-danger';
+                    title.textContent = 'Falha na requisição ao servidor.';
+                    pre.style.display = 'none';
+                })
+                .finally(() => { btn.disabled = false; });
+        });
+    </script>
+
   <script src="assets/session_keeper.js" defer></script>
 </body>
 
