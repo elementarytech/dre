@@ -1257,6 +1257,8 @@ $hojeTopo = date('d/m/Y');
                 </div>
                 <div class="modal-body" style="background:#f8fafc">
                     <div id="cvMensagem" class="text-muted small mb-2"></div>
+                    <input type="text" id="cvFiltro" class="form-control form-control-sm mb-2"
+                           placeholder="🔍 Filtrar vínculos por descrição, lançamento, #ID, valor, tipo (pagar/receber)…" autocomplete="off">
                     <div class="table-responsive border rounded bg-white">
                         <table class="table table-sm align-middle mb-0">
                             <thead class="table-light">
@@ -3955,7 +3957,22 @@ $hojeTopo = date('d/m/Y');
                 return;
             }
 
-            tb.innerHTML = j.rows.map(r => {
+            cvRowsCache = j.rows;
+            cvRenderVinculos();
+        });
+
+        let cvRowsCache = [];
+        document.getElementById('cvFiltro')?.addEventListener('input', () => cvRenderVinculos());
+        function cvRenderVinculos() {
+            const tb = document.getElementById('cvTbody');
+            const termo = pmNormalizar(document.getElementById('cvFiltro')?.value || '');
+            const rows = !termo ? cvRowsCache : cvRowsCache.filter(r => {
+                const tipoTxt = r.tipo === 'CONTA_PAGAR' ? 'pagar' : 'receber';
+                const hay = pmNormalizar(`${r.mov_descricao || ''} ${r.lanc_descricao || ''} #${r.lanc_fk} ${r.mov_valor || ''} ${r.valor_alocado || ''} ${tipoTxt} ${r.origem || ''} ${r.tipo_alocacao || ''}`);
+                return hay.indexOf(termo) >= 0;
+            });
+            if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" class="text-center text-muted small">Nenhum vínculo encontrado para o filtro.</td></tr>'; return; }
+            tb.innerHTML = rows.map(r => {
                 const movDescricao = `${formatDateBR(r.mov_data)} · ${escapeHtml((r.mov_descricao || '').substring(0, 60))}`;
                 const lancDescricao = `#${r.lanc_fk}${lancParcelaBadge(r)} · ${escapeHtml(r.lanc_descricao || '')}`;
                 const tipoBadge = r.tipo === 'CONTA_PAGAR'
@@ -3993,7 +4010,7 @@ $hojeTopo = date('d/m/Y');
                     </tr>
                 `;
             }).join('');
-        });
+        }
 
         // Cancelar integração inteira a partir do modal "Conferir vínculos"
         document.body.addEventListener('click', async (ev) => {
