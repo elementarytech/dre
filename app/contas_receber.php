@@ -396,18 +396,22 @@ if ($acao !== '') {
       }
 
       if ($q !== '') {
+        // Termo numérico também casa pelo ID da parcela (#ID).
+        $idCond = ctype_digit($q) ? " OR r.CRE_ID = :qid" : "";
         $where .= " AND (
                     r.CRE_CLIENTE_NOME LIKE :q1 OR
                     r.CRE_CPF_CNPJ LIKE :q2 OR
                     r.CRE_DOCUMENTO LIKE :q3 OR
                     ct.CTR_ID LIKE :q4 OR
                     cl.CLI_NOME_RAZAO LIKE :q5
+                    {$idCond}
                 ) ";
         $params[':q1'] = "%{$q}%";
         $params[':q2'] = "%{$q}%";
         $params[':q3'] = "%{$q}%";
         $params[':q4'] = "%{$q}%";
         $params[':q5'] = "%{$q}%";
+        if (ctype_digit($q)) $params[':qid'] = (int)$q;
       }
 
       $st = $db->prepare("SELECT COUNT(*)
@@ -2427,6 +2431,19 @@ try {
       return '<span class="badge-secondary">' + (s || '—') + '</span>';
     }
 
+    // Status efetivo para exibição: deriva ATRASADO quando a parcela está em
+    // aberto (ou parcial) e o vencimento já passou. ATRASADO raramente é
+    // persistido em CRE_STATUS — é um rótulo derivado da data.
+    function statusReceberEfetivo(r) {
+      const s = String(r.CRE_STATUS || '').toUpperCase();
+      if (s === 'RECEBIDO' || s === 'PAGO' || s === 'CANCELADO') return s;
+      const venc = String(r.CRE_VENCIMENTO || '').slice(0, 10);
+      const d = new Date();
+      const hoje = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      if (venc && venc < hoje) return 'ATRASADO';
+      return 'ABERTO';
+    }
+
     function badgeTipoRecebimento(tipo) {
       tipo = String(tipo || '').toUpperCase();
       if (tipo === 'INTEGRAL') return '<span class="badge-tipo-integral">INTEGRAL</span>';
@@ -2623,7 +2640,7 @@ try {
         return `
           <tr>
             <td class="mono">${r.CRE_ID || '—'}</td>
-            <td>${badgeStatus(r.CRE_STATUS)}</td>
+            <td>${badgeStatus(statusReceberEfetivo(r))}</td>
             <td class="mono">${r.CRE_CREATED_AT ? fmtBR(String(r.CRE_CREATED_AT).slice(0,10)) : '—'}</td>
             <td class="mono">${fmtBR(r.CRE_VENCIMENTO)}</td>
             <td class="mono">${(() => {
