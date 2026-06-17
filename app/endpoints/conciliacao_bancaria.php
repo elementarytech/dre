@@ -1175,9 +1175,10 @@ try {
                 }
             }
 
-            // 4) Rendimento de aplicação (juros pagos)
+            // 4) Rendimento de aplicação (juros pagos). Inclui o rendimento da conta
+            //    remunerada do BTG: "VALOR DE RENDIMENTO REMUNERADA".
             if ($natureza === 'NORMAL') {
-                if (preg_match('/REND(IMENTO)?\s+PAGO\s+APLIC|REND(IMENTOS)?\s+POUPAN/iu', $descricao . ' ' . $nameCru)) {
+                if (preg_match('/REND(IMENTO)?\s+PAGO\s+APLIC|REND(IMENTOS)?\s+POUPAN|RENDIMENTO\s+REMUNERAD|VALOR\s+DE\s+RENDIMENTO/iu', $descricao . ' ' . $nameCru)) {
                     $natureza = 'RENDIMENTO';
                 }
             }
