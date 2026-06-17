@@ -2374,6 +2374,7 @@ $hojeTopo = date('d/m/Y');
         async function dpLancar() {
             const itensCriar = [];
             const itensVincular = [];
+            const faltando = [];
             document.querySelectorAll("#dpTbody tr").forEach(tr => {
                 const chk = tr.querySelector(".dp-row-chk");
                 if (!chk || !chk.checked) return;
@@ -2388,6 +2389,12 @@ $hojeTopo = date('d/m/Y');
                 const fornFk = tr.querySelector(".dp-row-fornecedor-fk").value || 0;
                 const empFk  = tr.querySelector(".dp-row-empresa").value || 0;
                 const planoFk = tr.querySelector(".dp-row-plano").value || 0;
+                // Obrigatório: Empresa, Fornecedor e Conta contábil (plano) ao criar.
+                if (!empFk || !fornFk || !planoFk) {
+                    faltando.push("#" + (idx + 1));
+                    tr.style.background = "#fde2e2";
+                    return;
+                }
                 itensCriar.push({
                     movimento_fk: d.movimento_fk,
                     fornecedor_fk: fornFk,
@@ -2399,6 +2406,10 @@ $hojeTopo = date('d/m/Y');
                 });
             });
 
+            if (faltando.length) {
+                showToast("Preencha Empresa, Fornecedor e Conta contábil (plano) nos lançamentos a criar: " + faltando.join(", "), "warning");
+                return;
+            }
             if (!itensCriar.length && !itensVincular.length) {
                 showToast("Selecione ao menos um débito.", "warning");
                 return;
@@ -2807,6 +2818,7 @@ $hojeTopo = date('d/m/Y');
         async function cpLancar() {
             const itensCriar = [];
             const itensVincular = [];
+            const faltando = [];
             document.querySelectorAll("#cpTbody tr").forEach(tr => {
                 const chk = tr.querySelector(".cp-row-chk");
                 if (!chk || !chk.checked) return;
@@ -2822,6 +2834,12 @@ $hojeTopo = date('d/m/Y');
                 const cliNome = tr.querySelector(".cp-row-cliente-nome").value || tr.querySelector(".cp-row-cliente-busca").value || '';
                 const empFk = tr.querySelector(".cp-row-empresa").value || 0;
                 const planoFk = tr.querySelector(".cp-row-plano").value || 0;
+                // Obrigatório: Empresa, Cliente e Conta contábil (plano) ao criar.
+                if (!empFk || (!cliFk && !String(cliNome).trim()) || !planoFk) {
+                    faltando.push("#" + (idx + 1));
+                    tr.style.background = "#fde2e2";
+                    return;
+                }
                 itensCriar.push({
                     movimento_fk: c.movimento_fk,
                     cliente_fk: cliFk,
@@ -2834,6 +2852,10 @@ $hojeTopo = date('d/m/Y');
                 });
             });
 
+            if (faltando.length) {
+                showToast("Preencha Empresa, Cliente e Conta contábil (plano) nos lançamentos a criar: " + faltando.join(", "), "warning");
+                return;
+            }
             if (!itensCriar.length && !itensVincular.length) {
                 showToast("Selecione ao menos um crédito.", "warning");
                 return;
