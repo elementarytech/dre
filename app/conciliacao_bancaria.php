@@ -3982,21 +3982,20 @@ $hojeTopo = date('d/m/Y');
 
         // ====== Botão "Conferir vínculos" (Briefing 11) ======
         document.getElementById('btnConferirVinculos')?.addEventListener('click', async () => {
-            const bancoFk = parseInt(document.getElementById('selBancoOfx')?.value || '0', 10);
-            if (!bancoFk) { showToast('Selecione um banco antes.', 'warning'); return; }
-
+            // Carrega vínculos de TODOS os bancos (banco_fk=0) para permitir localizar
+            // qualquer vínculo pelo filtro, sem depender do banco selecionado.
             const tb = document.getElementById('cvTbody');
             tb.innerHTML = '<tr><td colspan="8" class="text-center text-muted small">Carregando…</td></tr>';
             const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalConferirVinculos'));
             modal.show();
 
-            const j = await apiGet({ acao: 'listar_vinculos_ativos_banco', banco_fk: bancoFk });
+            const j = await apiGet({ acao: 'listar_vinculos_ativos_banco', banco_fk: 0 });
             if (!j.ok) {
                 tb.innerHTML = `<tr><td colspan="8" class="text-center text-danger small">${escapeHtml(j.msg || 'Erro')}</td></tr>`;
                 return;
             }
             if (!j.rows || !j.rows.length) {
-                tb.innerHTML = '<tr><td colspan="8" class="text-center text-muted small">Nenhum vínculo ativo para este banco.</td></tr>';
+                tb.innerHTML = '<tr><td colspan="8" class="text-center text-muted small">Nenhum vínculo ativo.</td></tr>';
                 return;
             }
 
@@ -4011,7 +4010,7 @@ $hojeTopo = date('d/m/Y');
             const termo = pmNormalizar(document.getElementById('cvFiltro')?.value || '');
             const rows = !termo ? cvRowsCache : cvRowsCache.filter(r => {
                 const tipoTxt = r.tipo === 'CONTA_PAGAR' ? 'pagar' : 'receber';
-                const hay = pmNormalizar(`${r.mov_descricao || ''} ${r.lanc_descricao || ''} #${r.lanc_fk} ${r.mov_valor || ''} ${r.valor_alocado || ''} ${tipoTxt} ${r.origem || ''} ${r.tipo_alocacao || ''}`);
+                const hay = pmNormalizar(`${r.banco_nome || ''} ${r.mov_descricao || ''} ${r.lanc_descricao || ''} #${r.lanc_fk} ${r.mov_valor || ''} ${r.valor_alocado || ''} ${tipoTxt} ${r.origem || ''} ${r.tipo_alocacao || ''}`);
                 return hay.indexOf(termo) >= 0;
             });
             if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" class="text-center text-muted small">Nenhum vínculo encontrado para o filtro.</td></tr>'; return; }
@@ -4035,7 +4034,7 @@ $hojeTopo = date('d/m/Y');
 
                 return `
                     <tr>
-                        <td class="small">${movDescricao}<br><span class="text-muted mono">R$ ${money(Math.abs(r.mov_valor || 0))}</span></td>
+                        <td class="small">${r.banco_nome ? `<span class="badge bg-dark-subtle text-dark me-1">${escapeHtml(r.banco_nome)}</span>` : ''}${movDescricao}<br><span class="text-muted mono">R$ ${money(Math.abs(r.mov_valor || 0))}</span></td>
                         <td class="small">${lancDescricao}<br><span class="text-muted mono">total: R$ ${money(r.lanc_valor || 0)}</span></td>
                         <td>${tipoBadge}</td>
                         <td class="text-end mono small">R$ ${money(r.valor_alocado || 0)}</td>

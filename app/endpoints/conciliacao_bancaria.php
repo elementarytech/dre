@@ -3116,7 +3116,10 @@ try {
 
     if ($acao === 'listar_vinculos_ativos_banco') {
         $bancoFk = (int)($_GET['banco_fk'] ?? 0);
-        if ($bancoFk <= 0) json_out(['ok' => false, 'msg' => 'Banco inválido.'], 422);
+        // banco_fk = 0 => TODOS os bancos (permite localizar um vínculo de qualquer
+        // conta, ex.: buscar por #ID sem saber em qual banco está).
+        $bancoCond   = $bancoFk > 0 ? ' AND m.COM_BANCO_FK = ? ' : '';
+        $bancoParams = $bancoFk > 0 ? [$bancoFk] : [];
 
         $sqlNovo = "
             SELECT
@@ -3131,11 +3134,13 @@ try {
                 'NOVO' AS origem,
                 m.COM_DATA_MOVIMENTO AS mov_data,
                 m.COM_VALOR AS mov_valor,
-                m.COM_DESCRICAO AS mov_descricao
+                m.COM_DESCRICAO AS mov_descricao,
+                COALESCE(NULLIF(b.BAN_APELIDO,''), b.BAN_NOME) AS banco_nome
             FROM tb_conciliacao_vinculo v
             INNER JOIN tb_conciliacao_ofx_movimento m ON m.COM_CODIGO_PK = v.VIN_OFX_MOVIMENTO_FK
+            LEFT JOIN tb_banco b ON b.BAN_ID = m.COM_BANCO_FK
             WHERE v.VIN_STATUS = 'ATIVO'
-              AND m.COM_BANCO_FK = ?
+              {$bancoCond}
         ";
 
         $sqlLegPagar = "
@@ -3151,11 +3156,13 @@ try {
                 'LEGADO' AS origem,
                 m.COM_DATA_MOVIMENTO AS mov_data,
                 m.COM_VALOR AS mov_valor,
-                m.COM_DESCRICAO AS mov_descricao
+                m.COM_DESCRICAO AS mov_descricao,
+                COALESCE(NULLIF(b.BAN_APELIDO,''), b.BAN_NOME) AS banco_nome
             FROM tb_contas_pagar cp
             INNER JOIN tb_conciliacao_ofx_movimento m ON m.COM_CODIGO_PK = cp.CPG_OFX_MOVIMENTO_FK
+            LEFT JOIN tb_banco b ON b.BAN_ID = m.COM_BANCO_FK
             WHERE cp.CPG_OFX_MOVIMENTO_FK IS NOT NULL
-              AND m.COM_BANCO_FK = ?
+              {$bancoCond}
               AND NOT EXISTS (
                   SELECT 1 FROM tb_conciliacao_vinculo v2
                   WHERE v2.VIN_OFX_MOVIMENTO_FK = m.COM_CODIGO_PK AND v2.VIN_STATUS = 'ATIVO'
@@ -3175,11 +3182,13 @@ try {
                 'LEGADO' AS origem,
                 m.COM_DATA_MOVIMENTO AS mov_data,
                 m.COM_VALOR AS mov_valor,
-                m.COM_DESCRICAO AS mov_descricao
+                m.COM_DESCRICAO AS mov_descricao,
+                COALESCE(NULLIF(b.BAN_APELIDO,''), b.BAN_NOME) AS banco_nome
             FROM tb_contas_receber cr
             INNER JOIN tb_conciliacao_ofx_movimento m ON m.COM_CODIGO_PK = cr.CRE_OFX_MOVIMENTO_FK
+            LEFT JOIN tb_banco b ON b.BAN_ID = m.COM_BANCO_FK
             WHERE cr.CRE_OFX_MOVIMENTO_FK IS NOT NULL
-              AND m.COM_BANCO_FK = ?
+              {$bancoCond}
               AND NOT EXISTS (
                   SELECT 1 FROM tb_conciliacao_vinculo v2
                   WHERE v2.VIN_OFX_MOVIMENTO_FK = m.COM_CODIGO_PK AND v2.VIN_STATUS = 'ATIVO'
@@ -3205,7 +3214,7 @@ try {
 
         foreach ([$sqlNovo, $sqlLegPagar, $sqlLegRec] as $sql) {
             $st = $pdo->prepare($sql);
-            $st->execute([$bancoFk]);
+            $st->execute($bancoParams);
             foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
                 $stD = $r['tipo'] === 'CONTA_PAGAR' ? $stCpg : $stCre;
                 $stD->execute([$r['lanc_fk']]);
