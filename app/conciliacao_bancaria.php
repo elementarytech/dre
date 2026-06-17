@@ -4004,35 +4004,27 @@ $hojeTopo = date('d/m/Y');
         });
 
         let cvRowsCache = [];
-        document.getElementById('cvFiltro')?.addEventListener('input', () => cvRenderVinculos());
-        function cvRenderVinculos() {
-            const tb = document.getElementById('cvTbody');
-            const termo = pmNormalizar(document.getElementById('cvFiltro')?.value || '');
-            const rows = !termo ? cvRowsCache : cvRowsCache.filter(r => {
-                const tipoTxt = r.tipo === 'CONTA_PAGAR' ? 'pagar' : 'receber';
-                const hay = pmNormalizar(`${r.banco_nome || ''} ${r.mov_descricao || ''} ${r.lanc_descricao || ''} #${r.lanc_fk} ${r.mov_valor || ''} ${r.valor_alocado || ''} ${tipoTxt} ${r.origem || ''} ${r.tipo_alocacao || ''}`);
-                return hay.indexOf(termo) >= 0;
-            });
-            if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" class="text-center text-muted small">Nenhum vínculo encontrado para o filtro.</td></tr>'; return; }
-            tb.innerHTML = rows.map(r => {
-                const movDescricao = `${formatDateBR(r.mov_data)} · ${escapeHtml((r.mov_descricao || '').substring(0, 60))}`;
-                const lancDescricao = `#${r.lanc_fk}${lancParcelaBadge(r)} · ${escapeHtml(r.lanc_descricao || '')}`;
-                const tipoBadge = r.tipo === 'CONTA_PAGAR'
-                    ? '<span class="badge bg-danger-subtle text-danger">Pagar</span>'
-                    : '<span class="badge bg-success-subtle text-success">Receber</span>';
-                const origemBadge = r.origem === 'NOVO'
-                    ? '<span class="badge bg-primary-subtle text-primary">Novo</span>'
-                    : '<span class="badge bg-secondary-subtle text-secondary">Legado 1:1</span>';
-                const tipoAlocBadge = r.tipo_alocacao === 'PARCIAL'
-                    ? '<span class="badge bg-warning-subtle text-warning-emphasis">Parcial</span>'
-                    : '<span class="badge bg-light text-dark">Integral</span>';
+        let cvFiltered = [];
+        let cvShown = 0;
+        const CV_PAGE = 60; // renderiza em blocos para não travar com muitos vínculos
 
-                const tipoCurto = r.tipo === 'CONTA_PAGAR' ? 'PAGAR' : 'RECEBER';
-                const dataAttrCancelar = r.vin_id
-                    ? `data-vin="${r.vin_id}"`
-                    : `data-mov-legacy="${r.mov_fk}" data-tipo="${tipoCurto}"`;
-
-                return `
+        function cvRowHtml(r) {
+            const movDescricao = `${formatDateBR(r.mov_data)} · ${escapeHtml((r.mov_descricao || '').substring(0, 60))}`;
+            const lancDescricao = `#${r.lanc_fk}${lancParcelaBadge(r)} · ${escapeHtml(r.lanc_descricao || '')}`;
+            const tipoBadge = r.tipo === 'CONTA_PAGAR'
+                ? '<span class="badge bg-danger-subtle text-danger">Pagar</span>'
+                : '<span class="badge bg-success-subtle text-success">Receber</span>';
+            const origemBadge = r.origem === 'NOVO'
+                ? '<span class="badge bg-primary-subtle text-primary">Novo</span>'
+                : '<span class="badge bg-secondary-subtle text-secondary">Legado 1:1</span>';
+            const tipoAlocBadge = r.tipo_alocacao === 'PARCIAL'
+                ? '<span class="badge bg-warning-subtle text-warning-emphasis">Parcial</span>'
+                : '<span class="badge bg-light text-dark">Integral</span>';
+            const tipoCurto = r.tipo === 'CONTA_PAGAR' ? 'PAGAR' : 'RECEBER';
+            const dataAttrCancelar = r.vin_id
+                ? `data-vin="${r.vin_id}"`
+                : `data-mov-legacy="${r.mov_fk}" data-tipo="${tipoCurto}"`;
+            return `
                     <tr>
                         <td class="small">${r.banco_nome ? `<span class="badge bg-dark-subtle text-dark me-1">${escapeHtml(r.banco_nome)}</span>` : ''}${movDescricao}<br><span class="text-muted mono">R$ ${money(Math.abs(r.mov_valor || 0))}</span></td>
                         <td class="small">${lancDescricao}<br><span class="text-muted mono">total: R$ ${money(r.lanc_valor || 0)}</span></td>
@@ -4049,10 +4041,59 @@ $hojeTopo = date('d/m/Y');
                                 <i class="bi bi-trash"></i>
                             </button>
                         </td>
-                    </tr>
-                `;
-            }).join('');
+                    </tr>`;
         }
+
+        function cvAtualizaContador() {
+            const el = document.getElementById('cvMensagem');
+            if (!el) return;
+            const mostrando = Math.min(cvShown, cvFiltered.length);
+            el.textContent = `Mostrando ${mostrando} de ${cvFiltered.length} vínculo(s)`
+                + (cvShown < cvFiltered.length ? ' — role para carregar mais…' : '');
+        }
+
+        function cvAppendChunk() {
+            const tb = document.getElementById('cvTbody');
+            const slice = cvFiltered.slice(cvShown, cvShown + CV_PAGE);
+            if (slice.length) tb.insertAdjacentHTML('beforeend', slice.map(cvRowHtml).join(''));
+            cvShown += slice.length;
+            cvAtualizaContador();
+        }
+
+        function cvRenderVinculos() {
+            const termo = pmNormalizar(document.getElementById('cvFiltro')?.value || '');
+            cvFiltered = !termo ? cvRowsCache : cvRowsCache.filter(r => {
+                const tipoTxt = r.tipo === 'CONTA_PAGAR' ? 'pagar' : 'receber';
+                const hay = pmNormalizar(`${r.banco_nome || ''} ${r.mov_descricao || ''} ${r.lanc_descricao || ''} #${r.lanc_fk} ${r.mov_valor || ''} ${r.valor_alocado || ''} ${tipoTxt} ${r.origem || ''} ${r.tipo_alocacao || ''}`);
+                return hay.indexOf(termo) >= 0;
+            });
+            const tb = document.getElementById('cvTbody');
+            cvShown = 0;
+            tb.innerHTML = '';
+            if (!cvFiltered.length) {
+                tb.innerHTML = '<tr><td colspan="8" class="text-center text-muted small">Nenhum vínculo encontrado para o filtro.</td></tr>';
+                cvAtualizaContador();
+                return;
+            }
+            cvAppendChunk(); // primeiro bloco
+        }
+
+        // Filtro com debounce + carregamento progressivo ao rolar (scroll infinito).
+        let cvFiltroTimer = null;
+        document.getElementById('cvFiltro')?.addEventListener('input', () => {
+            clearTimeout(cvFiltroTimer);
+            cvFiltroTimer = setTimeout(cvRenderVinculos, 200);
+        });
+        (function () {
+            const body = document.querySelector('#modalConferirVinculos .modal-body');
+            if (!body) return;
+            body.addEventListener('scroll', () => {
+                if (cvShown < cvFiltered.length &&
+                    body.scrollTop + body.clientHeight >= body.scrollHeight - 120) {
+                    cvAppendChunk();
+                }
+            });
+        })();
 
         // Cancelar integração inteira a partir do modal "Conferir vínculos"
         document.body.addEventListener('click', async (ev) => {
