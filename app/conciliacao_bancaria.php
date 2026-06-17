@@ -524,7 +524,7 @@ $hojeTopo = date('d/m/Y');
                         <div class="cardish p-3 kpi-card h-100">
                             <div class="d-flex justify-content-between align-items-start mb-2">
                                 <span class="ss">Entradas (período)</span>
-                                <span class="badge badge-soft-success rounded-pill"><i class="bi bi-arrow-down-circle"></i></span>
+                                <span class="badge badge-soft-success rounded-pill"><i class="bi bi-arrow-up-circle"></i></span>
                             </div>
                             <p class="kpi-value text-success mono" id="kpiEntradas">R$ 0,00</p>
                             <p class="kpi-sub">Créditos no extrato OFX</p>
@@ -534,7 +534,7 @@ $hojeTopo = date('d/m/Y');
                         <div class="cardish p-3 kpi-card h-100">
                             <div class="d-flex justify-content-between align-items-start mb-2">
                                 <span class="ss">Saídas (período)</span>
-                                <span class="badge badge-soft-danger rounded-pill"><i class="bi bi-arrow-up-circle"></i></span>
+                                <span class="badge badge-soft-danger rounded-pill"><i class="bi bi-arrow-down-circle"></i></span>
                             </div>
                             <p class="kpi-value text-danger mono" id="kpiSaidas">R$ 0,00</p>
                             <p class="kpi-sub">Débitos no extrato OFX</p>
@@ -1580,7 +1580,7 @@ $hojeTopo = date('d/m/Y');
                 <td class="mono small">${r.data_br}</td>
                 <td class="fw-semibold small">${r.banco_nome}</td>
                 <td><span class="truncate" title="${r.descricao}">${r.descricao}</span>${natBadge}</td>
-                <td class="text-end mono small ${isOut ? 'text-danger' : 'text-success'}">${isOut ? '−' : '+'}R$ ${money(Math.abs(valor))}</td>
+                <td class="text-end mono small ${isOut ? 'text-danger' : 'text-success'}"><i class="bi ${isOut ? 'bi-arrow-down-short' : 'bi-arrow-up-short'}"></i>${isOut ? '−' : '+'}R$ ${money(Math.abs(valor))}</td>
                 <td class="text-end mono small">R$ ${money(r.saldo_apos)}</td>
                 <td>${badgeExtrato(r.status, r.conciliado)}</td>
                 <td class="text-center">
@@ -1690,7 +1690,7 @@ $hojeTopo = date('d/m/Y');
             <div class="col-6"><p class="small text-muted mb-0">Data</p><p class="fw-semibold mb-1">${r.data_br}</p></div>
             <div class="col-6"><p class="small text-muted mb-0">Banco</p><p class="fw-semibold mb-1">${r.banco_nome}</p></div>
             <div class="col-12"><p class="small text-muted mb-0">Descrição</p><p class="fw-semibold mb-1">${escapeHtml(r.descricao)}</p></div>
-            <div class="col-6"><p class="small text-muted mb-0">Valor</p><p class="fw-bold mono fs-5 ${isOut ? 'text-danger' : 'text-success'} mb-1">${isOut ? '−' : '+'}R$ ${money(Math.abs(valor))}</p></div>
+            <div class="col-6"><p class="small text-muted mb-0">Valor</p><p class="fw-bold mono fs-5 ${isOut ? 'text-danger' : 'text-success'} mb-1"><i class="bi ${isOut ? 'bi-arrow-down-short' : 'bi-arrow-up-short'}"></i>${isOut ? '−' : '+'}R$ ${money(Math.abs(valor))}</p></div>
             <div class="col-6"><p class="small text-muted mb-0">Saldo após</p><p class="fw-semibold mono mb-1">R$ ${money(r.saldo_apos)}</p></div>
             <div class="col-12"><p class="small text-muted mb-0">Status</p>${badgeExtrato(r.status, r.conciliado)}</div>
             <div class="col-12">${blocoMatch}</div>
@@ -3824,7 +3824,7 @@ $hojeTopo = date('d/m/Y');
                         <td class="small">${esc(r.banco || '—')}</td>
                         <td class="small">${esc(r.data)}</td>
                         <td class="small">${esc((r.descricao || '').slice(0, 70))}</td>
-                        <td><span class="badge ${r.tipo === 'DEBITO' ? 'bg-danger-subtle text-danger' : 'bg-success-subtle text-success'}">${esc(r.tipo)}</span></td>
+                        <td><span class="badge ${r.tipo === 'DEBITO' ? 'bg-danger-subtle text-danger' : 'bg-success-subtle text-success'}"><i class="bi ${r.tipo === 'DEBITO' ? 'bi-arrow-down-short' : 'bi-arrow-up-short'}"></i> ${esc(r.tipo)}</span></td>
                         <td class="text-end mono">${brl(Math.abs(r.valor))}</td>
                         <td>
                             <button class="btn btn-sm btn-outline-secondary" onclick="desmarcarTransferencia(${Number(r.id)})" title="Marcar como NORMAL (sai da lista de transferências internas)">
