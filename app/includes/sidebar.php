@@ -70,6 +70,9 @@ if (!function_exists('__sideLink')) {
             <li class="sidebar-section">Conta</li>
 
             <?= __sideLink($__rel.'usuarios.php',    'fa-solid fa-users',     'Usuários',      $__curFile) ?>
+            <?php if ($__isAdmin): ?>
+                <?= __sideLink($__rel.'auditoria.php', 'fa-solid fa-clipboard-check', 'Auditoria', $__curFile, ' <span class="badge bg-danger-subtle text-danger ms-auto" style="font-size:.65rem">Admin</span>') ?>
+            <?php endif; ?>
             <?= __sideLink($__rel.'meu_perfil.php',  'fa-solid fa-id-card',   'Meu Perfil',    $__curFile) ?>
             <?= __sideLink($__rel.'atualizacoes.php','fa-solid fa-rotate',    'Atualizações',  $__curFile) ?>
             <?= __sideLink($__rel.'configuracoes.php','fa-solid fa-gear',     'Configurações', $__curFile) ?>
