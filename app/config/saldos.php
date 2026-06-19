@@ -128,27 +128,51 @@ if (!function_exists('saldoErpConta')) {
         $dataCorte = $setRow ? (string) $setRow['CAS_DATA']      : '0000-00-00';
 
         // 2) Recebimentos POSTERIORES à data de corte
+        //    Conta o que foi EFETIVAMENTE recebido:
+        //      - RECEBIDO/PAGO  → valor recebido (ou o total, se o recebido não veio);
+        //      - PARCIAL (valor recebido > 0 sem status fechado) → só o valor já recebido.
+        //    Assim um recebimento parcial baixa o valor recebido na hora, e fica em
+        //    aberto apenas o restante. Cancelados nunca entram.
         $sqlR = "
-            SELECT COALESCE(SUM(COALESCE(NULLIF(CRE_VALOR_RECEBIDO,0), CRE_VALOR)), 0)
+            SELECT COALESCE(SUM(
+                CASE
+                    WHEN COALESCE(CRE_VALOR_RECEBIDO,0) > 0 THEN CRE_VALOR_RECEBIDO
+                    WHEN CRE_STATUS IN ({$phCre})          THEN CRE_VALOR
+                    ELSE 0
+                END
+            ), 0)
             FROM tb_contas_receber
             WHERE CRE_BANCO_FK = ?
-              AND CRE_STATUS IN ({$phCre})
+              AND COALESCE(CRE_STATUS,'') <> 'CANCELADO'
               AND CRE_RECEBIDO_EM > ?
         ";
         $stR = $pdo->prepare($sqlR);
-        $stR->execute(array_merge([$bancoFk], CRE_STATUS_PAGO, [$dataCorte]));
+        // Ordem dos placeholders: phCre (no CASE, no SELECT) → banco → data de corte.
+        $stR->execute(array_merge(CRE_STATUS_PAGO, [$bancoFk, $dataCorte]));
         $saldoReceber = (float) $stR->fetchColumn();
 
         // 3) Pagamentos POSTERIORES à data de corte
+        //    Conta o que foi EFETIVAMENTE pago:
+        //      - PAGO     → valor pago (ou a parcela, se o pago não veio preenchido);
+        //      - PARCIAL (valor pago > 0 sem status PAGO) → só o valor já pago.
+        //    Assim um pagamento parcial baixa o valor pago na hora, e fica em aberto
+        //    apenas o restante. Cancelados nunca entram.
         $sqlP = "
-            SELECT COALESCE(SUM(COALESCE(CPG_VALOR_PAGO, CPG_VALOR_PARCELA)), 0)
+            SELECT COALESCE(SUM(
+                CASE
+                    WHEN COALESCE(CPG_VALOR_PAGO,0) > 0 THEN CPG_VALOR_PAGO
+                    WHEN CPG_STATUS IN ({$phCpg})       THEN CPG_VALOR_PARCELA
+                    ELSE 0
+                END
+            ), 0)
             FROM tb_contas_pagar
             WHERE CPG_BANCO_PAGAMENTO_FK = ?
-              AND CPG_STATUS IN ({$phCpg})
+              AND COALESCE(CPG_STATUS,'') <> 'CANCELADO'
               AND CPG_DATA_PAGAMENTO > ?
         ";
         $stP = $pdo->prepare($sqlP);
-        $stP->execute(array_merge([$bancoFk], CPG_STATUS_PAGO, [$dataCorte]));
+        // Ordem dos placeholders: phCpg (no CASE, no SELECT) → banco → data de corte.
+        $stP->execute(array_merge(CPG_STATUS_PAGO, [$bancoFk, $dataCorte]));
         $saldoPagar = (float) $stP->fetchColumn();
 
         // 4) Ajustes SOMA/SUB ATIVOS posteriores ao SET
