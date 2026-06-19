@@ -144,10 +144,13 @@ if (!function_exists('aplicarAlocacaoConta')) {
                         $lancId, number_format($valorTotal, 2, ',', '.')
                     ));
                 }
-                if (empty($cp['CPG_OFX_MOVIMENTO_FK'])) {
-                    $pdo->prepare("UPDATE tb_contas_pagar SET CPG_OFX_MOVIMENTO_FK = ? WHERE CPG_CODIGO_PK = ?")
-                        ->execute([$movFk, $lancId]);
-                }
+                // O OFX é a fonte da verdade do banco: ao vincular, alinha o banco da
+                // conta ao do extrato (corrige baixa lançada em banco errado).
+                $pdo->prepare("UPDATE tb_contas_pagar
+                               SET CPG_OFX_MOVIMENTO_FK = COALESCE(CPG_OFX_MOVIMENTO_FK, ?),
+                                   CPG_BANCO_PAGAMENTO_FK = ?
+                               WHERE CPG_CODIGO_PK = ?")
+                    ->execute([$movFk, $bancoFk, $lancId]);
                 return ['tipo_alocacao_real' => 'INTEGRAL', 'novo_status' => 'PAGO', 'modo' => 'JA_PAGA_VINCULO'];
             }
 
@@ -179,7 +182,7 @@ if (!function_exists('aplicarAlocacaoConta')) {
             $pdo->prepare("UPDATE tb_contas_pagar
                            SET CPG_VALOR_PAGO = ?,
                                CPG_DATA_PAGAMENTO = COALESCE(CPG_DATA_PAGAMENTO, ?),
-                               CPG_BANCO_PAGAMENTO_FK = COALESCE(CPG_BANCO_PAGAMENTO_FK, ?),
+                               CPG_BANCO_PAGAMENTO_FK = ?,
                                CPG_OFX_MOVIMENTO_FK = ?,
                                CPG_STATUS = ?,
                                CPG_PAGO = ?,
@@ -214,10 +217,13 @@ if (!function_exists('aplicarAlocacaoConta')) {
                     $lancId, number_format($valorTotal, 2, ',', '.')
                 ));
             }
-            if (empty($cr['CRE_OFX_MOVIMENTO_FK'])) {
-                $pdo->prepare("UPDATE tb_contas_receber SET CRE_OFX_MOVIMENTO_FK = ? WHERE CRE_ID = ?")
-                    ->execute([$movFk, $lancId]);
-            }
+            // O OFX é a fonte da verdade do banco: ao vincular, alinha o banco da
+            // conta ao do extrato (corrige baixa lançada em banco errado).
+            $pdo->prepare("UPDATE tb_contas_receber
+                           SET CRE_OFX_MOVIMENTO_FK = COALESCE(CRE_OFX_MOVIMENTO_FK, ?),
+                               CRE_BANCO_FK = ?
+                           WHERE CRE_ID = ?")
+                ->execute([$movFk, $bancoFk, $lancId]);
             return ['tipo_alocacao_real' => 'INTEGRAL', 'novo_status' => 'RECEBIDO', 'modo' => 'JA_PAGA_VINCULO'];
         }
 
@@ -247,7 +253,7 @@ if (!function_exists('aplicarAlocacaoConta')) {
         $pdo->prepare("UPDATE tb_contas_receber
                        SET CRE_VALOR_RECEBIDO = ?,
                            CRE_RECEBIDO_EM = COALESCE(CRE_RECEBIDO_EM, ?),
-                           CRE_BANCO_FK = COALESCE(CRE_BANCO_FK, ?),
+                           CRE_BANCO_FK = ?,
                            CRE_OFX_MOVIMENTO_FK = ?,
                            CRE_STATUS = ?
                        WHERE CRE_ID = ?")

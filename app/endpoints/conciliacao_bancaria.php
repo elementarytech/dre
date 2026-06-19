@@ -2141,10 +2141,12 @@ try {
                     if ($lanc['CPG_OFX_MOVIMENTO_FK']) {
                         throw new Exception('Este lançamento já está pago e vinculado a outro movimento OFX.');
                     }
+                    // OFX é a fonte da verdade do banco: alinha o banco ao do extrato.
                     $pdo->prepare("UPDATE tb_contas_pagar
-                                   SET CPG_OFX_MOVIMENTO_FK = ?
+                                   SET CPG_OFX_MOVIMENTO_FK = ?,
+                                       CPG_BANCO_PAGAMENTO_FK = ?
                                    WHERE CPG_CODIGO_PK = ?")
-                        ->execute([$movFk, $lancId]);
+                        ->execute([$movFk, $bancoFk, $lancId]);
                 } else {
                     // Em aberto/parcial — soma o valor do OFX ao já pago. Suporta um 2º
                     // pagamento parcial mesmo quando o 1º já deixou um vínculo legado
@@ -2184,7 +2186,7 @@ try {
                                        CPG_STATUS = ?,
                                        CPG_INTEGRAL_PARCIAL = ?,
                                        CPG_DATA_PAGAMENTO = COALESCE(CPG_DATA_PAGAMENTO, ?),
-                                       CPG_BANCO_PAGAMENTO_FK = COALESCE(CPG_BANCO_PAGAMENTO_FK, ?),
+                                       CPG_BANCO_PAGAMENTO_FK = ?,
                                        CPG_VALOR_PAGO = ?,
                                        CPG_OFX_MOVIMENTO_FK = ?,
                                        CPG_AUTORIZACAO_STATUS = COALESCE(CPG_AUTORIZACAO_STATUS, 'AUTORIZADO')
@@ -2211,10 +2213,12 @@ try {
                     if ($lanc['CRE_OFX_MOVIMENTO_FK']) {
                         throw new Exception('Este lançamento já está recebido e vinculado a outro movimento OFX.');
                     }
+                    // OFX é a fonte da verdade do banco: alinha o banco ao do extrato.
                     $pdo->prepare("UPDATE tb_contas_receber
-                                   SET CRE_OFX_MOVIMENTO_FK = ?
+                                   SET CRE_OFX_MOVIMENTO_FK = ?,
+                                       CRE_BANCO_FK = ?
                                    WHERE CRE_ID = ?")
-                        ->execute([$movFk, $lancId]);
+                        ->execute([$movFk, $bancoFk, $lancId]);
                 } else {
                     // Em aberto/parcial — soma o valor do OFX ao já recebido. Suporta um 2º
                     // recebimento parcial mesmo quando o 1º já deixou um vínculo legado.
@@ -2250,7 +2254,7 @@ try {
                                    SET CRE_STATUS = ?,
                                        CRE_TIPO_RECEBIMENTO = ?,
                                        CRE_RECEBIDO_EM = COALESCE(CRE_RECEBIDO_EM, ?),
-                                       CRE_BANCO_FK = COALESCE(CRE_BANCO_FK, ?),
+                                       CRE_BANCO_FK = ?,
                                        CRE_VALOR_RECEBIDO = ?,
                                        CRE_OFX_MOVIMENTO_FK = ?
                                    WHERE CRE_ID = ?")
