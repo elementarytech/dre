@@ -1675,6 +1675,10 @@ try {
               AND m.COM_TIPO = 'CREDITO'
               AND COALESCE(m.COM_CONCILIADO, 'NAO') <> 'SIM'
               AND m.COM_NATUREZA NOT IN ('TRANSFERENCIA_INTERNA','APLICACAO','TARIFA','RENDIMENTO')
+              -- Não são recebimentos: artefatos sintéticos de ajuste manual de saldo
+              -- e movimentos cancelados não devem virar conta a receber.
+              AND COALESCE(m.COM_REFERENCIA_TIPO, '') <> 'AJUSTE_MANUAL'
+              AND COALESCE(m.COM_STATUS, '') <> 'CANCELADO'
             ORDER BY m.COM_DATA_MOVIMENTO ASC, m.COM_CODIGO_PK ASC
         ");
         $stMov->execute([':banco' => $impBanco, ':conta' => $impConta]);
