@@ -21,6 +21,16 @@ if (!function_exists('publicarUsuarioAuditoria')) {
     function publicarUsuarioAuditoria(PDO $pdo): void
     {
         try {
+            // Garante a sessão iniciada ANTES de ler $_SESSION. Vários endpoints
+            // dão require deste arquivo (via conexao.php) ANTES do próprio
+            // session_start(), o que fazia a auditoria gravar usuário/IP NULL
+            // (origem 'SQL/DIRETO') mesmo havendo usuário logado.
+            if (PHP_SAPI !== 'cli'
+                && session_status() === PHP_SESSION_NONE
+                && !headers_sent()) {
+                session_start();
+            }
+
             $id   = isset($_SESSION['user_id']) ? (int) $_SESSION['user_id'] : null;
             $nome = $_SESSION['user_nome'] ?? null;
             if ($nome === null && PHP_SAPI === 'cli') {
