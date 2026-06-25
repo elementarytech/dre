@@ -1697,6 +1697,7 @@ $hojeTopo = date('d/m/Y');
             <div class="col-12"><p class="small text-muted mb-0">Status</p>${badgeExtrato(r.status, r.conciliado)}</div>
             <div class="col-12">${blocoMatch}</div>
             <div class="col-12">${blocoVinculos}</div>
+            <div class="col-12" id="trfSlot"></div>
         </div>
     `;
 
@@ -1713,7 +1714,86 @@ $hojeTopo = date('d/m/Y');
                 }
             }
 
+            // Opção: conciliar este movimento como transferência entre contas próprias
+            // (não vira conta a pagar/receber; move o saldo origem → destino).
+            if (String(r.status || '').toUpperCase() !== 'CONCILIADO') {
+                await montarBlocoTransferencia(r);
+            }
+
             bsDetalhe.show();
+        }
+
+        // Cache da lista de bancos (para os selects de transferência)
+        let _bancosCombo = null;
+        async function obterBancosCombo() {
+            if (_bancosCombo) return _bancosCombo;
+            const j = await apiGet({ acao: 'combo_bancos' });
+            _bancosCombo = (j && j.ok && Array.isArray(j.bancos)) ? j.bancos : [];
+            return _bancosCombo;
+        }
+
+        async function montarBlocoTransferencia(r) {
+            const slot = document.getElementById('trfSlot');
+            if (!slot) return;
+            const bancos = await obterBancosCombo();
+            const isOut = Number(r.valor || 0) < 0; // débito = saída
+            const meuBanco = Number(r.banco_fk || 0);
+            const opts = (sel) => bancos.map(b =>
+                `<option value="${b.id}" ${Number(b.id) === sel ? 'selected' : ''}>${escapeHtml(b.texto)}</option>`).join('');
+            // Pré-preenche: débito → este banco é a ORIGEM; crédito → este banco é o DESTINO.
+            const origemSel  = isOut ? meuBanco : 0;
+            const destinoSel = isOut ? 0 : meuBanco;
+            slot.innerHTML = `
+                <hr class="my-2">
+                <details class="border rounded p-2" style="background:#f8fafc">
+                    <summary class="small fw-bold" style="cursor:pointer"><i class="bi bi-arrow-left-right me-1"></i>É uma transferência entre contas próprias?</summary>
+                    <div class="mt-2">
+                        <div class="small text-muted mb-2">Não vira conta a pagar/receber. Só move o saldo: <b>sai da origem, entra no destino</b>. A outra perna do extrato casa automaticamente.</div>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label small mb-1">Conta de origem (saída)</label>
+                                <select id="trfOrigem" class="form-select form-select-sm"><option value="">—</option>${opts(origemSel)}</select>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small mb-1">Conta de destino (entrada)</label>
+                                <select id="trfDestino" class="form-select form-select-sm"><option value="">—</option>${opts(destinoSel)}</select>
+                            </div>
+                        </div>
+                        <button type="button" id="btnConciliarTransf" class="btn btn-sm btn-info text-white mt-2 w-100">
+                            <i class="bi bi-arrow-left-right me-1"></i>Conciliar como transferência entre contas
+                        </button>
+                    </div>
+                </details>
+            `;
+            document.getElementById('btnConciliarTransf')?.addEventListener('click', conciliarComoTransferencia);
+        }
+
+        async function conciliarComoTransferencia() {
+            const origem  = Number(document.getElementById('trfOrigem')?.value || 0);
+            const destino = Number(document.getElementById('trfDestino')?.value || 0);
+            if (!origem || !destino) { showToast('Selecione a conta de origem e a de destino.', 'warning'); return; }
+            if (origem === destino) { showToast('Origem e destino devem ser contas diferentes.', 'warning'); return; }
+            const conf = await Swal.fire({
+                title: 'Conciliar como transferência?',
+                html: 'Vai marcar como transferência interna (não gera conta a pagar/receber) e mover o saldo da origem para o destino.',
+                icon: 'question', showCancelButton: true, confirmButtonText: 'Confirmar', cancelButtonText: 'Cancelar', confirmButtonColor: '#0ea5e9'
+            });
+            if (!conf.isConfirmed) return;
+            const fd = new FormData();
+            fd.append('acao', 'conciliar_como_transferencia');
+            fd.append('id', detalheId);
+            fd.append('banco_origem_id', String(origem));
+            fd.append('banco_destino_id', String(destino));
+            try {
+                const j = await apiPostForm(fd);
+                if (!j.ok) { Swal.fire('Não foi possível', j.msg || 'Erro', 'error'); return; }
+                bsDetalhe.hide();
+                showToast(j.msg || 'Transferência conciliada.', 'success');
+                await carregarResumo();
+                await carregarExtrato();
+            } catch (e) {
+                Swal.fire('Erro', String(e), 'error');
+            }
         }
 
         async function conciliarLancamento() {

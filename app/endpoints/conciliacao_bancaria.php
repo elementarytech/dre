@@ -570,10 +570,127 @@ try {
                 'saldo_apos' => (float)$r['COM_SALDO_APOS'],
                 'status' => (string)$r['COM_STATUS'],
                 'banco_nome' => (string)($r['BAN_APELIDO'] ?: $r['BAN_NOME']),
+                'banco_fk' => (int)$r['COM_BANCO_FK'],
             ],
             'match' => $match,
             'match_tipo' => $matchTipo,
         ]);
+    }
+
+    // ── Conciliar um movimento OFX COMO TRANSFERÊNCIA ENTRE CONTAS PRÓPRIAS ──
+    // Num passo só: (1) marca a(s) perna(s) como TRANSFERENCIA_INTERNA (não vira
+    // conta a pagar/receber), (2) move o saldo ERP (SUB origem / SOMA destino, igual
+    // à transferência rápida — sem gerar OFX sintético) e (3) casa a perna oposta se
+    // ela já estiver no extrato. O banco já reflete via OFX; isto acerta o lado ERP.
+    if ($acao === 'conciliar_como_transferencia') {
+        $movFk          = (int)($_POST['id'] ?? 0);
+        $bancoOrigemId  = (int)($_POST['banco_origem_id'] ?? 0);
+        $bancoDestinoId = (int)($_POST['banco_destino_id'] ?? 0);
+
+        if ($movFk <= 0) json_out(['ok' => false, 'msg' => 'Movimento inválido.'], 422);
+        if ($bancoOrigemId <= 0 || $bancoDestinoId <= 0) json_out(['ok' => false, 'msg' => 'Selecione as contas de origem e destino.'], 422);
+        if ($bancoOrigemId === $bancoDestinoId) json_out(['ok' => false, 'msg' => 'Origem e destino devem ser contas diferentes.'], 422);
+
+        $stM = $pdo->prepare("SELECT COM_BANCO_FK, COM_TIPO, COM_VALOR, COM_DATA_MOVIMENTO, COM_NATUREZA FROM tb_conciliacao_ofx_movimento WHERE COM_CODIGO_PK = ? LIMIT 1");
+        $stM->execute([$movFk]);
+        $mov = $stM->fetch(PDO::FETCH_ASSOC);
+        if (!$mov) json_out(['ok' => false, 'msg' => 'Movimento não encontrado.'], 404);
+
+        // Idempotência: não duplica a transferência se já houver uma ativa para este movimento.
+        $jaTrb = $pdo->prepare("SELECT COUNT(*) FROM tb_transferencia_bancaria WHERE TRB_STATUS = 'ATIVO' AND (TRB_MOV_ORIGEM_FK = ? OR TRB_MOV_DESTINO_FK = ?)");
+        $jaTrb->execute([$movFk, $movFk]);
+        if ((int)$jaTrb->fetchColumn() > 0) {
+            json_out(['ok' => false, 'msg' => 'Este movimento já foi conciliado como transferência.'], 409);
+        }
+
+        $valor = abs((float)$mov['COM_VALOR']);
+        $data  = substr((string)$mov['COM_DATA_MOVIMENTO'], 0, 10);
+        if ($valor <= 0) json_out(['ok' => false, 'msg' => 'Valor do movimento inválido.'], 422);
+
+        // Anti-duplicidade: se as duas pernas forem conciliadas separadamente (a 2ª só
+        // chegou no extrato depois), não registra a transferência de novo — já existe
+        // uma ativa entre essas contas, mesmo valor, data próxima.
+        $jaSimilar = $pdo->prepare("SELECT COUNT(*) FROM tb_transferencia_bancaria
+            WHERE TRB_STATUS = 'ATIVO' AND ABS(TRB_VALOR - ?) < 0.01 AND ABS(DATEDIFF(TRB_DATA, ?)) <= 2
+              AND ((TRB_BANCO_ORIGEM_FK = ? AND TRB_BANCO_DESTINO_FK = ?)
+                OR (TRB_BANCO_ORIGEM_FK = ? AND TRB_BANCO_DESTINO_FK = ?))");
+        $jaSimilar->execute([$valor, $data, $bancoOrigemId, $bancoDestinoId, $bancoDestinoId, $bancoOrigemId]);
+        if ((int)$jaSimilar->fetchColumn() > 0) {
+            json_out(['ok' => false, 'msg' => 'Já existe uma transferência registrada entre essas contas, com esse valor e data. (Provavelmente a outra perna já foi conciliada.)'], 409);
+        }
+
+        $getBanco = function (int $id) use ($pdo) {
+            $s = $pdo->prepare("SELECT BAN_ID, BAN_APELIDO, BAN_NOME, BAN_AGENCIA, BAN_CONTA FROM tb_banco WHERE BAN_ID = ? LIMIT 1");
+            $s->execute([$id]);
+            return $s->fetch(PDO::FETCH_ASSOC);
+        };
+        $bo = $getBanco($bancoOrigemId);
+        $bd = $getBanco($bancoDestinoId);
+        if (!$bo || !$bd) json_out(['ok' => false, 'msg' => 'Conta de origem/destino não encontrada.'], 404);
+        $refOrigem  = trim((string)$bo['BAN_AGENCIA']) . '/' . trim((string)$bo['BAN_CONTA']);
+        $refDestino = trim((string)$bd['BAN_AGENCIA']) . '/' . trim((string)$bd['BAN_CONTA']);
+        $nomeOrig   = (string)($bo['BAN_APELIDO'] ?: $bo['BAN_NOME']);
+        $nomeDest   = (string)($bd['BAN_APELIDO'] ?: $bd['BAN_NOME']);
+        $usuario    = (string)($_SESSION['user_nome'] ?? $_SESSION['usuarioSession'] ?? 'Sistema');
+
+        $pdo->beginTransaction();
+        try {
+            // 1) marca a perna do movimento como transferência interna (não vira P&L)
+            $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento SET COM_NATUREZA = 'TRANSFERENCIA_INTERNA', COM_CONCILIADO = 'NAO', COM_STATUS = 'IMPORTADO', COM_REFERENCIA_TIPO = NULL, COM_REFERENCIA_FK = NULL WHERE COM_CODIGO_PK = ?")
+                ->execute([$movFk]);
+
+            // 2) procura a perna oposta no outro banco (mesmo valor ±0,01, ±2 dias) e casa o par
+            $tipoMov    = strtoupper((string)$mov['COM_TIPO']); // DEBITO (saída) ou CREDITO (entrada)
+            $bancoOutro = ($tipoMov === 'DEBITO') ? $bancoDestinoId : $bancoOrigemId;
+            $tipoOposto = ($tipoMov === 'DEBITO') ? 'CREDITO' : 'DEBITO';
+            $stOp = $pdo->prepare("SELECT COM_CODIGO_PK FROM tb_conciliacao_ofx_movimento
+                                   WHERE COM_BANCO_FK = ? AND UPPER(COM_TIPO) = ? AND ABS(ABS(COM_VALOR) - ?) < 0.01
+                                     AND ABS(DATEDIFF(COM_DATA_MOVIMENTO, ?)) <= 2
+                                     AND COALESCE(COM_STATUS, '') <> 'CANCELADO' AND COM_CODIGO_PK <> ?
+                                   ORDER BY ABS(DATEDIFF(COM_DATA_MOVIMENTO, ?)) ASC LIMIT 1");
+            $stOp->execute([$bancoOutro, $tipoOposto, $valor, $data, $movFk, $data]);
+            $opId = (int)($stOp->fetchColumn() ?: 0);
+
+            $movDeb = ($tipoMov === 'DEBITO') ? $movFk : $opId;
+            $movCre = ($tipoMov === 'DEBITO') ? $opId : $movFk;
+
+            if ($opId > 0) {
+                $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento SET COM_NATUREZA = 'TRANSFERENCIA_INTERNA', COM_CONCILIADO = 'NAO', COM_STATUS = 'IMPORTADO', COM_REFERENCIA_TIPO = NULL, COM_REFERENCIA_FK = NULL WHERE COM_CODIGO_PK = ?")
+                    ->execute([$opId]);
+                $jaPar = $pdo->prepare("SELECT COUNT(*) FROM tb_transferencia_interna WHERE TFI_STATUS = 'ATIVO' AND (TFI_MOV_ORIGEM_FK IN (?,?) OR TFI_MOV_DESTINO_FK IN (?,?))");
+                $jaPar->execute([$movDeb, $movCre, $movDeb, $movCre]);
+                if ((int)$jaPar->fetchColumn() === 0 && $movDeb > 0 && $movCre > 0) {
+                    $pdo->prepare("INSERT INTO tb_transferencia_interna (TFI_MOV_ORIGEM_FK, TFI_MOV_DESTINO_FK, TFI_VALOR, TFI_MODO_DETECCAO, TFI_USUARIO) VALUES (?,?,?,'MANUAL',?)")
+                        ->execute([$movDeb, $movCre, $valor, $usuario]);
+                }
+            }
+
+            // 3) move o saldo ERP: SUB origem / SOMA destino (sem OFX sintético)
+            $saldoAntO = saldoErpConta($pdo, $bancoOrigemId, $refOrigem);
+            $saldoAntD = saldoErpConta($pdo, $bancoDestinoId, $refDestino);
+            $insCas = $pdo->prepare("INSERT INTO tb_conciliacao_ajuste_saldo
+                (CAS_BANCO_FK, CAS_CONTA_REF, CAS_DATA, CAS_CAMPO_AJUSTADO, CAS_OPERACAO, CAS_VALOR, CAS_SALDO_ANTERIOR, CAS_SALDO_NOVO, CAS_MOTIVO, CAS_OBSERVACAO, CAS_STATUS, CAS_USUARIO)
+                VALUES (?,?,?,'SALDO_ERP',?,?,?,?,'TRANSFERENCIA_BANCARIA',?,'ATIVO',?)");
+            $insCas->execute([$bancoOrigemId, $refOrigem, $data, 'SUB', $valor, $saldoAntO, $saldoAntO - $valor, "Transferência para {$nomeDest} (conciliação OFX)", $usuario]);
+            $ajO = (int)$pdo->lastInsertId();
+            $insCas->execute([$bancoDestinoId, $refDestino, $data, 'SOMA', $valor, $saldoAntD, $saldoAntD + $valor, "Transferência de {$nomeOrig} (conciliação OFX)", $usuario]);
+            $ajD = (int)$pdo->lastInsertId();
+
+            // registro mestre da transferência
+            $pdo->prepare("INSERT INTO tb_transferencia_bancaria
+                (TRB_DATA, TRB_VALOR, TRB_BANCO_ORIGEM_FK, TRB_BANCO_DESTINO_FK, TRB_DESCRICAO, TRB_STATUS, TRB_AJUSTE_ORIGEM_FK, TRB_AJUSTE_DESTINO_FK, TRB_MOV_ORIGEM_FK, TRB_MOV_DESTINO_FK, TRB_USUARIO)
+                VALUES (?,?,?,?,?,'ATIVO',?,?,?,?,?)")
+                ->execute([$data, $valor, $bancoOrigemId, $bancoDestinoId, 'Conciliação OFX — transferência entre contas', $ajO, $ajD, ($movDeb > 0 ? $movDeb : null), ($movCre > 0 ? $movCre : null), $usuario]);
+
+            $pdo->commit();
+            json_out([
+                'ok'  => true,
+                'msg' => "Transferência conciliada: {$nomeOrig} → {$nomeDest} (R$ " . number_format($valor, 2, ',', '.') . "). Saldos movimentados." . ($opId > 0 ? ' Par casado no extrato.' : ' (A outra perna casa quando o extrato dela for importado.)'),
+            ]);
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            json_out(['ok' => false, 'msg' => 'Falha ao conciliar transferência: ' . $e->getMessage()], 500);
+        }
     }
 
     if ($acao === 'conciliar_movimento') {
