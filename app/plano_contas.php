@@ -409,6 +409,13 @@ require_once $APP_ROOT . '/config/auth.php';
             <button class="btn btn-sm btn-outline-primary me-1" data-act="edit" data-id="${r.PLC_ID}">
               <i class="fa-solid fa-pen"></i>
             </button>
+            ${(r.PLC_STATUS === 'ATIVO')
+              ? `<button class="btn btn-sm btn-outline-warning me-1" data-act="inativar" data-id="${r.PLC_ID}" title="Inativar (impede o uso, mantém o histórico)">
+                   <i class="fa-solid fa-ban"></i>
+                 </button>`
+              : `<button class="btn btn-sm btn-outline-success me-1" data-act="ativar" data-id="${r.PLC_ID}" title="Reativar conta">
+                   <i class="fa-solid fa-check"></i>
+                 </button>`}
             <button class="btn btn-sm btn-outline-danger" data-act="del" data-id="${r.PLC_ID}">
               <i class="fa-solid fa-trash"></i>
             </button>
@@ -553,6 +560,36 @@ require_once $APP_ROOT . '/config/auth.php';
             await listar();
         }
 
+        // Inativa/Reativa a conta sem apagar o histórico de uso.
+        async function alterarStatus(id, novoStatus) {
+            const inativando = (novoStatus === 'INATIVO');
+            const c = await Swal.fire({
+                icon: inativando ? 'warning' : 'question',
+                title: inativando ? 'Inativar conta?' : 'Reativar conta?',
+                text: inativando
+                    ? 'A conta deixará de aparecer para novos lançamentos, mas o histórico de uso é mantido.'
+                    : 'A conta voltará a ficar disponível para uso.',
+                showCancelButton: true,
+                confirmButtonText: inativando ? 'Sim, inativar' : 'Sim, reativar',
+                cancelButtonText: 'Cancelar'
+            });
+            if (!c.isConfirmed) return;
+
+            const j = await api({
+                acao: 'alterar_status',
+                id,
+                status: novoStatus
+            }, 'POST');
+            Swal.fire({
+                icon: 'success',
+                title: 'Ok',
+                text: j.msg,
+                timer: 900,
+                showConfirmButton: false
+            });
+            await listar();
+        }
+
         // binds
         document.getElementById('btnFiltrar').addEventListener('click', () => {
             state.page = 1;
@@ -650,6 +687,11 @@ require_once $APP_ROOT . '/config/auth.php';
                 text: err.message
             }));
             if (act === 'del') excluir(id).catch(err => Swal.fire({
+                icon: 'error',
+                title: 'Erro',
+                text: err.message
+            }));
+            if (act === 'inativar' || act === 'ativar') alterarStatus(id, act === 'ativar' ? 'ATIVO' : 'INATIVO').catch(err => Swal.fire({
                 icon: 'error',
                 title: 'Erro',
                 text: err.message

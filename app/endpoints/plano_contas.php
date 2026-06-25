@@ -291,6 +291,30 @@ try {
     }
 
     // ============================================================
+    // ALTERAR STATUS (Inativar / Reativar — preserva histórico de uso)
+    // ============================================================
+    if ($acao === 'alterar_status') {
+        require_post();
+        $id     = $asInt($_POST['id'] ?? 0);
+        $status = strtoupper($asStr($_POST['status'] ?? ''));
+        if ($id <= 0) json_out(['ok' => false, 'msg' => 'ID inválido.'], 422);
+        if (!in_array($status, ['ATIVO', 'INATIVO'], true)) {
+            json_out(['ok' => false, 'msg' => 'Status inválido.'], 422);
+        }
+
+        $st = $pdo->prepare("UPDATE tb_plano_contas SET PLC_STATUS=? WHERE PLC_CODIGO_PK=?");
+        $st->execute([$status, $id]);
+        if ($st->rowCount() === 0) {
+            // mesmo sem alteração de linha (status já igual), confirma o estado
+            $chk = $pdo->prepare("SELECT 1 FROM tb_plano_contas WHERE PLC_CODIGO_PK=? LIMIT 1");
+            $chk->execute([$id]);
+            if (!$chk->fetchColumn()) json_out(['ok' => false, 'msg' => 'Conta não encontrada.'], 404);
+        }
+
+        json_out(['ok' => true, 'msg' => $status === 'INATIVO' ? 'Conta inativada.' : 'Conta reativada.']);
+    }
+
+    // ============================================================
     // COMBO EMPRESAS (EMP_ID / EMP_RAZAO_SOCIAL)
     // ============================================================
     if ($acao === 'empresas_combo') {
