@@ -405,20 +405,22 @@ require_once $APP_ROOT . '/config/auth.php';
           <td>${r.EMP_RAZAO_SOCIAL ?? r.EMP_NOME ?? ''}</td>
           <td>${badgeTipo(r.PLC_TIPO)}</td>
           <td>${badgeStatus(r.PLC_STATUS)}</td>
-          <td class="text-end">
-            <button class="btn btn-sm btn-outline-primary me-1" data-act="edit" data-id="${r.PLC_ID}">
-              <i class="fa-solid fa-pen"></i>
-            </button>
-            ${(r.PLC_STATUS === 'ATIVO')
-              ? `<button class="btn btn-sm btn-outline-warning me-1" data-act="inativar" data-id="${r.PLC_ID}" title="Inativar (impede o uso, mantém o histórico)">
-                   <i class="fa-solid fa-ban"></i>
-                 </button>`
-              : `<button class="btn btn-sm btn-outline-success me-1" data-act="ativar" data-id="${r.PLC_ID}" title="Reativar conta">
-                   <i class="fa-solid fa-check"></i>
-                 </button>`}
-            <button class="btn btn-sm btn-outline-danger" data-act="del" data-id="${r.PLC_ID}">
-              <i class="fa-solid fa-trash"></i>
-            </button>
+          <td class="text-end text-nowrap" style="width:1%">
+            <div class="d-inline-flex gap-1 justify-content-end flex-nowrap">
+              <button class="btn btn-sm btn-outline-primary" data-act="edit" data-id="${r.PLC_ID}" title="Editar">
+                <i class="fa-solid fa-pen"></i>
+              </button>
+              ${(r.PLC_STATUS === 'ATIVO')
+                ? `<button class="btn btn-sm btn-outline-warning" data-act="inativar" data-id="${r.PLC_ID}" title="Inativar (impede o uso, mantém o histórico)">
+                     <i class="fa-solid fa-ban"></i>
+                   </button>`
+                : `<button class="btn btn-sm btn-outline-success" data-act="ativar" data-id="${r.PLC_ID}" title="Reativar conta">
+                     <i class="fa-solid fa-check"></i>
+                   </button>`}
+              <button class="btn btn-sm btn-outline-danger" data-act="del" data-id="${r.PLC_ID}" title="Excluir">
+                <i class="fa-solid fa-trash"></i>
+              </button>
+            </div>
           </td>
         </tr>
       `);
