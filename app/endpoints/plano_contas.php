@@ -345,20 +345,28 @@ try {
     // ============================================================
     if ($acao === 'pais_combo') {
         $empresa_fk = $asStr($_GET['empresa_fk'] ?? '');
-        if ($empresa_fk === '') json_out(['ok' => true, 'rows' => []]);
 
-        $st = $pdo->prepare("
-            SELECT
-                PLC_CODIGO_PK AS PLC_ID,
-                PLC_CODIGO,
-                PLC_NOME,
-                PLC_TIPO
-            FROM tb_plano_contas
-            WHERE PLC_STATUS='ATIVO'
-              AND PLC_EMPRESA_FK = ?
-            ORDER BY PLC_CODIGO ASC, PLC_NOME ASC
-        ");
-        $st->execute([(int)$empresa_fk]);
+        // O plano de contas é global (compartilhado entre empresas): as contas
+        // existentes têm PLC_EMPRESA_FK = NULL. Por isso a lista de "Conta Pai"
+        // inclui as contas globais (NULL) e, se houver, as da empresa selecionada.
+        if ($empresa_fk === '') {
+            $st = $pdo->prepare("
+                SELECT PLC_CODIGO_PK AS PLC_ID, PLC_CODIGO, PLC_NOME, PLC_TIPO
+                FROM tb_plano_contas
+                WHERE PLC_STATUS='ATIVO'
+                ORDER BY PLC_CODIGO ASC, PLC_NOME ASC
+            ");
+            $st->execute();
+        } else {
+            $st = $pdo->prepare("
+                SELECT PLC_CODIGO_PK AS PLC_ID, PLC_CODIGO, PLC_NOME, PLC_TIPO
+                FROM tb_plano_contas
+                WHERE PLC_STATUS='ATIVO'
+                  AND (PLC_EMPRESA_FK = ? OR PLC_EMPRESA_FK IS NULL)
+                ORDER BY PLC_CODIGO ASC, PLC_NOME ASC
+            ");
+            $st->execute([(int)$empresa_fk]);
+        }
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
 
         foreach ($rows as &$r) {
@@ -366,6 +374,45 @@ try {
         }
 
         json_out(['ok' => true, 'rows' => $rows]);
+    }
+
+    // ============================================================
+    // PRÓXIMO CÓDIGO FILHO LIVRE (auto-preenchimento ao escolher a conta pai)
+    // ============================================================
+    if ($acao === 'proximo_codigo_filho') {
+        $parent_id = (int)($_GET['parent_id'] ?? 0);
+        if ($parent_id <= 0) json_out(['ok' => false, 'msg' => 'Conta pai inválida.'], 422);
+
+        $stp = $pdo->prepare("SELECT PLC_CODIGO FROM tb_plano_contas WHERE PLC_CODIGO_PK=? LIMIT 1");
+        $stp->execute([$parent_id]);
+        $parentCod = trim((string)($stp->fetchColumn() ?: ''));
+        if ($parentCod === '') json_out(['ok' => false, 'msg' => 'Conta pai não encontrada.'], 404);
+
+        $prefix = $parentCod . '.';
+
+        // Coleta os filhos diretos (qualquer status/empresa) p/ não reutilizar código.
+        $st = $pdo->prepare("SELECT PLC_CODIGO FROM tb_plano_contas WHERE PLC_CODIGO LIKE ?");
+        $st->execute([$prefix . '%']);
+        $used = [];
+        $width = 0;
+        foreach ($st as $r) {
+            $rest = substr(trim((string)$r['PLC_CODIGO']), strlen($prefix));
+            $seg  = explode('.', $rest)[0]; // só o segmento direto
+            if ($seg !== '' && ctype_digit($seg)) {
+                $used[(int)$seg] = true;
+                $width = max($width, strlen($seg));
+            }
+        }
+        if ($width <= 0) $width = 3; // padrão usado no plano (ex.: 01.02.001)
+
+        // primeiro número livre (preenche lacunas)
+        $n = 1;
+        while (isset($used[$n])) $n++;
+
+        $childCod = $prefix . str_pad((string)$n, $width, '0', STR_PAD_LEFT);
+        $nivel = count(array_filter(explode('.', $childCod), fn($x) => $x !== ''));
+
+        json_out(['ok' => true, 'codigo' => $childCod, 'nivel' => $nivel, 'parent_codigo' => $parentCod]);
     }
 
     json_out(['ok' => false, 'msg' => 'Ação inválida.'], 400);

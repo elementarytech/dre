@@ -334,11 +334,11 @@ require_once $APP_ROOT . '/config/auth.php';
             const sel = document.getElementById('PLC_PARENT_ID');
             if (!sel) return;
             sel.innerHTML = '<option value="">— Nenhuma —</option>';
-            if (!empresaId) return;
 
+            // Plano de contas é global: carrega os pais mesmo sem empresa selecionada.
             const j = await api({
                 acao: 'pais_combo',
-                empresa_fk: empresaId
+                empresa_fk: empresaId || ''
             }, 'GET');
             const rows = j.rows || [];
             sel.insertAdjacentHTML('beforeend',
@@ -627,9 +627,10 @@ require_once $APP_ROOT . '/config/auth.php';
 
         // (removido listener duplicado do fEmpresa)
 
-        document.getElementById('btnNovo').addEventListener('click', () => {
+        document.getElementById('btnNovo').addEventListener('click', async () => {
             limparModal();
             document.getElementById('modalTitle').textContent = 'Novo plano de contas';
+            await carregarPais('');   // carrega contas pai (plano global) já ao abrir
             modal.show();
         });
         document.getElementById('btnSalvar').addEventListener('click', () => salvar().catch(err => Swal.fire({
@@ -662,6 +663,36 @@ require_once $APP_ROOT . '/config/auth.php';
         });
         document.getElementById('PLC_EMPRESA_FK').addEventListener('change', async () => {
             await carregarPais(document.getElementById('PLC_EMPRESA_FK').value, '');
+        });
+
+        // Ao escolher a conta pai: autocompleta o próximo código de filho livre + nível.
+        // Sem conta pai: libera o código para o usuário criar a conta pai que quiser.
+        document.getElementById('PLC_PARENT_ID').addEventListener('change', async () => {
+            const parentId = document.getElementById('PLC_PARENT_ID').value;
+            const codInp = document.getElementById('PLC_CODIGO');
+            const nivelInp = document.getElementById('PLC_NIVEL');
+
+            if (!parentId) {
+                // Conta raiz/pai: usuário digita o código livremente.
+                codInp.readOnly = false;
+                codInp.focus();
+                nivelInp.value = String(computeNivelByCodigo(codInp.value));
+                return;
+            }
+
+            try {
+                const j = await api({
+                    acao: 'proximo_codigo_filho',
+                    parent_id: parentId
+                }, 'GET');
+                if (j.ok) {
+                    codInp.value = j.codigo;          // ex.: 01.02.012 (próximo livre)
+                    nivelInp.value = String(j.nivel); // nível derivado do código
+                    codInp.readOnly = false;          // editável, mas backend bloqueia duplicidade
+                }
+            } catch (err) {
+                Swal.fire({ icon: 'error', title: 'Erro', text: err.message });
+            }
         });
 
         // init
