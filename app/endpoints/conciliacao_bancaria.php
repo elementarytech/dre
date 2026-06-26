@@ -348,6 +348,7 @@ try {
         $sql = "
             SELECT
                 m.COM_CODIGO_PK,
+                m.COM_BANCO_FK,
                 DATE_FORMAT(m.COM_DATA_MOVIMENTO, '%d/%m/%Y') AS data_br,
                 m.COM_DESCRICAO,
                 m.COM_VALOR,
@@ -401,6 +402,7 @@ try {
         while ($r = $st->fetch(PDO::FETCH_ASSOC)) {
             $movimentos[] = [
                 'id'              => (int)$r['COM_CODIGO_PK'],
+                'banco_fk'        => (int)$r['COM_BANCO_FK'],
                 'data_br'         => (string)$r['data_br'],
                 'descricao'       => (string)$r['COM_DESCRICAO'],
                 'valor'           => (float)$r['COM_VALOR'],
@@ -710,6 +712,32 @@ try {
         $st->execute([':id' => $id]);
 
         json_out(['ok' => true]);
+    }
+
+    // ── Conciliar APLICAÇÕES em lote ──
+    // Aplicação/resgate é movimento INTERNO da própria conta (já refletido no
+    // extrato e já excluído do DRE pela natureza). Conciliar = classificar como
+    // APLICACAO + marcar CONCILIADO para sair da lista de pendentes. NÃO move saldo
+    // e NÃO reatribui banco (o seletor do modal só confirma a conta).
+    if ($acao === 'conciliar_aplicacao_lote') {
+        $idsRaw = $_POST['ids'] ?? '';
+        $lista  = is_array($idsRaw) ? $idsRaw : explode(',', (string)$idsRaw);
+        $ids    = array_values(array_filter(array_unique(array_map('intval', $lista)), fn($x) => $x > 0));
+        if (!$ids) json_out(['ok' => false, 'msg' => 'Nenhum movimento selecionado.'], 422);
+
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        $st = $pdo->prepare("
+            UPDATE tb_conciliacao_ofx_movimento
+            SET COM_NATUREZA = 'APLICACAO',
+                COM_STATUS = 'CONCILIADO',
+                COM_CONCILIADO = 'SIM',
+                COM_REFERENCIA_TIPO = NULL,
+                COM_REFERENCIA_FK = NULL
+            WHERE COM_CODIGO_PK IN ($in)
+        ");
+        $st->execute($ids);
+        $n = $st->rowCount();
+        json_out(['ok' => true, 'msg' => "$n aplicação(ões) conciliada(s).", 'conciliados' => $n]);
     }
 
     if ($acao === 'conciliar_e_vincular') {

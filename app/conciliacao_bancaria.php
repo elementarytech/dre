@@ -712,10 +712,20 @@ $hojeTopo = date('d/m/Y');
                             </div>
                         </div>
 
+                        <div id="extBulkBar" class="d-none align-items-center gap-2 mb-2 p-2 rounded" style="background:#eff6ff;border:1px solid #bfdbfe">
+                            <i class="bi bi-check2-square text-primary"></i>
+                            <span class="small fw-semibold"><span id="extBulkCount">0</span> selecionado(s)</span>
+                            <button type="button" class="btn btn-sm btn-primary" id="btnConciliarLote">
+                                <i class="bi bi-collection me-1"></i>Conciliar em lote
+                            </button>
+                            <button type="button" class="btn btn-sm btn-link text-secondary" id="btnLimparSelecaoExt">Limpar seleção</button>
+                        </div>
+
                         <div class="table-responsive">
                             <table class="table table-hover table-sm align-middle mb-0">
                                 <thead class="table-light">
                                     <tr>
+                                        <th style="width:34px" class="text-center"><input type="checkbox" id="extChkAll" title="Selecionar todos os pendentes"></th>
                                         <th style="width:105px">Data</th>
                                         <th style="width:128px">Banco</th>
                                         <th>Descrição</th>
@@ -915,6 +925,63 @@ $hojeTopo = date('d/m/Y');
                 <div class="modal-footer border-0 pt-0 d-flex justify-content-between">
                     <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
                     <button class="btn btn-sm btn-success" id="btnConciliarLanc"><i class="bi bi-check-circle me-1"></i>Marcar como conciliado</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Conciliar em lote (transferência ou aplicação) -->
+    <div class="modal fade" id="modalConciliarLote" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header border-0 pb-1">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-collection me-2 text-primary"></i>Conciliar em lote</h5>
+                    <button class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-muted mb-2"><span id="cloteQtd">0</span> movimento(s) selecionado(s) — <span id="cloteBancoNome" class="fw-semibold"></span></p>
+                    <div class="table-responsive border rounded mb-3" style="max-height:200px;overflow:auto">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead class="table-light"><tr><th>Data</th><th>Descrição</th><th class="text-end">Valor</th></tr></thead>
+                            <tbody id="cloteLista"></tbody>
+                        </table>
+                    </div>
+
+                    <p class="small fw-semibold mb-1">Como conciliar os selecionados?</p>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="cloteTipo" id="cloteTipoTransf" value="TRANSFERENCIA">
+                        <label class="form-check-label small" for="cloteTipoTransf"><i class="bi bi-arrow-left-right me-1"></i>É uma transferência entre contas</label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="radio" name="cloteTipo" id="cloteTipoAplic" value="APLICACAO" checked>
+                        <label class="form-check-label small" for="cloteTipoAplic"><i class="bi bi-piggy-bank me-1"></i>Aplicação (rende fácil / resgate / conta remunerada)</label>
+                    </div>
+
+                    <!-- Painel: transferência -->
+                    <div id="clotePainelTransf" class="border rounded p-2 d-none" style="background:#f8fafc">
+                        <div class="small text-muted mb-2">Aplica a mesma origem/destino a <b>todos</b> os selecionados. Use para transferências entre as mesmas duas contas. A outra perna casa automaticamente.</div>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label small mb-1">Conta de origem (saída)</label>
+                                <select id="cloteTrfOrigem" class="form-select form-select-sm"></select>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small mb-1">Conta de destino (entrada)</label>
+                                <select id="cloteTrfDestino" class="form-select form-select-sm"></select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Painel: aplicação -->
+                    <div id="clotePainelAplic" class="border rounded p-2" style="background:#fffbeb">
+                        <div class="small text-muted mb-2">Marca os selecionados como <b>aplicação</b> (movimento interno da conta) e concilia. Não vira conta a pagar/receber e não move saldo — apenas confirma a conta.</div>
+                        <label class="form-label small mb-1">Conta (banco)</label>
+                        <select id="cloteAplicBanco" class="form-select form-select-sm"></select>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0 d-flex justify-content-between">
+                    <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button class="btn btn-sm btn-primary" id="btnSalvarLote"><i class="bi bi-check2-circle me-1"></i>Salvar</button>
                 </div>
             </div>
         </div>
@@ -1560,7 +1627,7 @@ $hojeTopo = date('d/m/Y');
             tbody.innerHTML = "";
 
             if (!j.ok || !j.movimentos.length) {
-                tbody.innerHTML = `<tr><td colspan="7" class="text-muted py-3 text-center small">Nenhum lançamento.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="8" class="text-muted py-3 text-center small">Nenhum lançamento.</td></tr>`;
                 return;
             }
 
@@ -1577,8 +1644,16 @@ $hojeTopo = date('d/m/Y');
                     : (r.natureza === 'TARIFA')
                     ? '<span class="badge ms-1" style="background:rgba(100,116,139,.15);color:#475569">Tarifa</span>'
                     : '';
+                const podeSelecionar = r.status !== 'CONCILIADO';
+                const chkCell = podeSelecionar
+                    ? `<input type="checkbox" class="ext-chk" value="${r.id}"
+                              data-banco-fk="${r.banco_fk}" data-banco-nome="${escapeHtml(r.banco_nome || '')}"
+                              data-valor="${valor}" data-natureza="${r.natureza || 'NORMAL'}"
+                              data-desc="${escapeHtml(r.descricao || '')}" data-data="${r.data_br}">`
+                    : '';
                 tbody.innerHTML += `
             <tr style="${r.status === 'CONCILIADO' ? 'opacity:.6' : ''}">
+                <td class="text-center">${chkCell}</td>
                 <td class="mono small">${r.data_br}</td>
                 <td class="fw-semibold small">${r.banco_nome}</td>
                 <td><span class="truncate" title="${r.descricao}">${r.descricao}</span>${natBadge}</td>
@@ -1597,6 +1672,10 @@ $hojeTopo = date('d/m/Y');
             document.querySelectorAll(".btn-detalhe-ext").forEach(btn => {
                 btn.addEventListener("click", () => abrirDetalheExtrato(btn.dataset.id));
             });
+            // Reinicia o estado da seleção em lote a cada recarga do extrato
+            const chkAll = document.getElementById('extChkAll');
+            if (chkAll) chkAll.checked = false;
+            atualizarBarraLote();
         }
 
         async function abrirDetalheExtrato(id) {
@@ -1797,6 +1876,150 @@ $hojeTopo = date('d/m/Y');
                 Swal.fire('Erro', String(e), 'error');
             }
         }
+
+        // ===== Conciliação em LOTE (transferência ou aplicação) =====
+        let bsConciliarLote = null;
+        let cloteSelecionados = [];
+
+        function selecionadosExtrato() {
+            return Array.from(document.querySelectorAll('.ext-chk:checked')).map(c => ({
+                id: Number(c.value),
+                bancoFk: Number(c.dataset.bancoFk || 0),
+                bancoNome: c.dataset.bancoNome || '',
+                valor: Number(c.dataset.valor || 0),
+                natureza: c.dataset.natureza || 'NORMAL',
+                desc: c.dataset.desc || '',
+                data: c.dataset.data || ''
+            }));
+        }
+
+        function atualizarBarraLote() {
+            const sel = document.querySelectorAll('.ext-chk:checked').length;
+            const bar = document.getElementById('extBulkBar');
+            const cnt = document.getElementById('extBulkCount');
+            if (cnt) cnt.textContent = String(sel);
+            if (bar) bar.classList.toggle('d-none', sel === 0);
+            // mantém o "selecionar todos" coerente
+            const all = document.querySelectorAll('.ext-chk');
+            const chkAll = document.getElementById('extChkAll');
+            if (chkAll) chkAll.checked = all.length > 0 && sel === all.length;
+        }
+
+        function limparSelecaoExtrato() {
+            document.querySelectorAll('.ext-chk:checked').forEach(c => c.checked = false);
+            const chkAll = document.getElementById('extChkAll');
+            if (chkAll) chkAll.checked = false;
+            atualizarBarraLote();
+        }
+
+        async function abrirModalConciliarLote() {
+            const sel = selecionadosExtrato();
+            if (!sel.length) { showToast('Selecione ao menos um movimento.', 'warning'); return; }
+
+            // Lote exige movimentos da MESMA conta (banco)
+            const bancos = [...new Set(sel.map(s => s.bancoFk))];
+            if (bancos.length > 1) {
+                Swal.fire('Contas diferentes', 'Selecione movimentos de uma única conta/banco por vez para conciliar em lote.', 'warning');
+                return;
+            }
+            cloteSelecionados = sel;
+            const bancoFk = sel[0].bancoFk;
+            const bancoNome = sel[0].bancoNome;
+
+            document.getElementById('cloteQtd').textContent = String(sel.length);
+            document.getElementById('cloteBancoNome').textContent = bancoNome;
+            document.getElementById('cloteLista').innerHTML = sel.map(s => `
+                <tr>
+                    <td class="small mono">${escapeHtml(s.data)}</td>
+                    <td class="small"><span class="truncate" title="${escapeHtml(s.desc)}">${escapeHtml((s.desc || '').slice(0, 60))}</span></td>
+                    <td class="text-end mono small ${s.valor < 0 ? 'text-danger' : 'text-success'}">${s.valor < 0 ? '−' : '+'}R$ ${money(Math.abs(s.valor))}</td>
+                </tr>`).join('');
+
+            // Preenche selects de banco (combo) e pré-seleciona a conta do lote
+            const bancosCombo = await obterBancosCombo();
+            const opts = bancosCombo.map(b => `<option value="${b.id}">${escapeHtml(b.texto)}</option>`).join('');
+            const selAplic = document.getElementById('cloteAplicBanco');
+            const selOri = document.getElementById('cloteTrfOrigem');
+            const selDst = document.getElementById('cloteTrfDestino');
+            selAplic.innerHTML = opts;
+            selOri.innerHTML = '<option value="">—</option>' + opts;
+            selDst.innerHTML = '<option value="">—</option>' + opts;
+            selAplic.value = String(bancoFk);
+            selDst.value = String(bancoFk); // destino padrão = a própria conta
+
+            // estado inicial: aplicação selecionada
+            document.getElementById('cloteTipoAplic').checked = true;
+            togglePainelLote();
+
+            if (!bsConciliarLote) bsConciliarLote = new bootstrap.Modal(document.getElementById('modalConciliarLote'));
+            bsConciliarLote.show();
+        }
+
+        function togglePainelLote() {
+            const tipo = (document.querySelector('input[name="cloteTipo"]:checked') || {}).value || 'APLICACAO';
+            document.getElementById('clotePainelTransf').classList.toggle('d-none', tipo !== 'TRANSFERENCIA');
+            document.getElementById('clotePainelAplic').classList.toggle('d-none', tipo !== 'APLICACAO');
+            const btn = document.getElementById('btnSalvarLote');
+            btn.innerHTML = (tipo === 'TRANSFERENCIA')
+                ? '<i class="bi bi-arrow-left-right me-1"></i>Conciliar como transferência'
+                : '<i class="bi bi-piggy-bank me-1"></i>Salvar aplicação';
+        }
+
+        async function salvarConciliacaoLote() {
+            const tipo = (document.querySelector('input[name="cloteTipo"]:checked') || {}).value || 'APLICACAO';
+            const ids = cloteSelecionados.map(s => s.id);
+            if (!ids.length) return;
+            const btn = document.getElementById('btnSalvarLote');
+            btn.disabled = true;
+
+            try {
+                if (tipo === 'APLICACAO') {
+                    const fd = new FormData();
+                    fd.append('acao', 'conciliar_aplicacao_lote');
+                    fd.append('ids', ids.join(','));
+                    const j = await apiPostForm(fd);
+                    if (!j.ok) { Swal.fire('Não foi possível', j.msg || 'Erro', 'error'); return; }
+                    showToast(j.msg || 'Aplicações conciliadas.', 'success');
+                } else {
+                    const origem = Number(document.getElementById('cloteTrfOrigem').value || 0);
+                    const destino = Number(document.getElementById('cloteTrfDestino').value || 0);
+                    if (!origem || !destino) { showToast('Selecione origem e destino.', 'warning'); return; }
+                    if (origem === destino) { showToast('Origem e destino devem ser diferentes.', 'warning'); return; }
+                    let ok = 0, falhas = 0;
+                    for (const id of ids) {
+                        const fd = new FormData();
+                        fd.append('acao', 'conciliar_como_transferencia');
+                        fd.append('id', String(id));
+                        fd.append('banco_origem_id', String(origem));
+                        fd.append('banco_destino_id', String(destino));
+                        const j = await apiPostForm(fd);
+                        if (j.ok) ok++; else falhas++;
+                    }
+                    showToast(`Transferências: ${ok} conciliada(s)${falhas ? ', ' + falhas + ' já existente(s)/sem par' : ''}.`, falhas && !ok ? 'warning' : 'success');
+                }
+                if (bsConciliarLote) bsConciliarLote.hide();
+                limparSelecaoExtrato();
+                await carregarResumo();
+                await carregarExtrato();
+            } catch (e) {
+                Swal.fire('Erro', String(e.message || e), 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        // Bindings da seleção em lote
+        document.addEventListener('change', (ev) => {
+            if (ev.target.classList && ev.target.classList.contains('ext-chk')) atualizarBarraLote();
+            if (ev.target.id === 'extChkAll') {
+                document.querySelectorAll('.ext-chk').forEach(c => c.checked = ev.target.checked);
+                atualizarBarraLote();
+            }
+            if (ev.target.name === 'cloteTipo') togglePainelLote();
+        });
+        document.getElementById('btnConciliarLote')?.addEventListener('click', abrirModalConciliarLote);
+        document.getElementById('btnLimparSelecaoExt')?.addEventListener('click', limparSelecaoExtrato);
+        document.getElementById('btnSalvarLote')?.addEventListener('click', salvarConciliacaoLote);
 
         async function conciliarLancamento() {
             if (!detalheId) return;
