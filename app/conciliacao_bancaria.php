@@ -1609,7 +1609,9 @@ $hojeTopo = date('d/m/Y');
                 id
             });
             if (!j.ok) {
-                showToast(j.msg || "Erro ao abrir detalhe.", "danger");
+                // Mostra o detalhe técnico (ex.: erro SQL real) p/ diagnóstico, além da msg amigável.
+                console.error("detalhe_extrato falhou:", j);
+                showToast((j.msg || "Erro ao abrir detalhe.") + (j.detail ? " — " + j.detail : ""), "danger");
                 return;
             }
 
