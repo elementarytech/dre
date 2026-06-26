@@ -641,7 +641,7 @@ try {
         $pdo->beginTransaction();
         try {
             // 1) marca a perna do movimento como transferência interna (não vira P&L)
-            $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento SET COM_NATUREZA = 'TRANSFERENCIA_INTERNA', COM_CONCILIADO = 'NAO', COM_STATUS = 'IMPORTADO', COM_REFERENCIA_TIPO = NULL, COM_REFERENCIA_FK = NULL WHERE COM_CODIGO_PK = ?")
+            $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento SET COM_NATUREZA = 'TRANSFERENCIA_INTERNA', COM_CONCILIADO = 'SIM', COM_STATUS = 'CONCILIADO', COM_REFERENCIA_TIPO = NULL, COM_REFERENCIA_FK = NULL WHERE COM_CODIGO_PK = ?")
                 ->execute([$movFk]);
 
             // 2) procura a perna oposta no outro banco (mesmo valor ±0,01, ±2 dias) e casa o par
@@ -660,7 +660,7 @@ try {
             $movCre = ($tipoMov === 'DEBITO') ? $opId : $movFk;
 
             if ($opId > 0) {
-                $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento SET COM_NATUREZA = 'TRANSFERENCIA_INTERNA', COM_CONCILIADO = 'NAO', COM_STATUS = 'IMPORTADO', COM_REFERENCIA_TIPO = NULL, COM_REFERENCIA_FK = NULL WHERE COM_CODIGO_PK = ?")
+                $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento SET COM_NATUREZA = 'TRANSFERENCIA_INTERNA', COM_CONCILIADO = 'SIM', COM_STATUS = 'CONCILIADO', COM_REFERENCIA_TIPO = NULL, COM_REFERENCIA_FK = NULL WHERE COM_CODIGO_PK = ?")
                     ->execute([$opId]);
                 $jaPar = $pdo->prepare("SELECT COUNT(*) FROM tb_transferencia_interna WHERE TFI_STATUS = 'ATIVO' AND (TFI_MOV_ORIGEM_FK IN (?,?) OR TFI_MOV_DESTINO_FK IN (?,?))");
                 $jaPar->execute([$movDeb, $movCre, $movDeb, $movCre]);
@@ -2749,13 +2749,18 @@ try {
         $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento SET COM_NATUREZA = ? WHERE COM_CODIGO_PK = ?")
             ->execute([$natureza, $movId]);
 
-        // Se voltou para NORMAL, cancela par associado (se houver)
+        // Se voltou para NORMAL, cancela par associado (se houver) e volta o
+        // movimento para pendente (desfaz o CONCILIADO setado pela transferência).
         if ($natureza === 'NORMAL') {
             $pdo->prepare("UPDATE tb_transferencia_interna
                            SET TFI_STATUS = 'CANCELADO'
                            WHERE (TFI_MOV_ORIGEM_FK = ? OR TFI_MOV_DESTINO_FK = ?)
                              AND TFI_STATUS = 'ATIVO'")
                 ->execute([$movId, $movId]);
+            $pdo->prepare("UPDATE tb_conciliacao_ofx_movimento
+                           SET COM_STATUS = 'IMPORTADO', COM_CONCILIADO = 'NAO'
+                           WHERE COM_CODIGO_PK = ?")
+                ->execute([$movId]);
         }
         json_out(['ok' => true]);
     }
