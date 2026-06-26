@@ -513,7 +513,9 @@ try {
 
                 $orderPrior = "";
                 if ($cnpjCpfDescr !== '') {
-                    $orderPrior = " ORDER BY (REPLACE(REPLACE(REPLACE(IFNULL(cl.CLI_DOCUMENTO,''),'.',''),'/',''),'-','') = :cnpjDescr OR REPLACE(REPLACE(REPLACE(IFNULL(cr.CRE_CPF_CNPJ,''),'.',''),'/',''),'-','') = :cnpjDescr) DESC, ABS(DATEDIFF(cr.CRE_VENCIMENTO, :dataMov)) ASC ";
+                    // IMPORTANTE: com PDO nativo (EMULATE_PREPARES=false) não se pode reutilizar
+                    // o MESMO placeholder 2x — gera HY093. Por isso :cnpjDescr1 e :cnpjDescr2.
+                    $orderPrior = " ORDER BY (REPLACE(REPLACE(REPLACE(IFNULL(cl.CLI_DOCUMENTO,''),'.',''),'/',''),'-','') = :cnpjDescr1 OR REPLACE(REPLACE(REPLACE(IFNULL(cr.CRE_CPF_CNPJ,''),'.',''),'/',''),'-','') = :cnpjDescr2) DESC, ABS(DATEDIFF(cr.CRE_VENCIMENTO, :dataMov)) ASC ";
                 } else {
                     $orderPrior = " ORDER BY ABS(DATEDIFF(cr.CRE_VENCIMENTO, :dataMov)) ASC ";
                 }
@@ -524,7 +526,10 @@ try {
                       . $orderPrior . " LIMIT 1";
                 $st2 = $pdo->prepare($sql1);
                 $params1 = [':banco' => $bancoFk, ':valor' => $valorAbs, ':dataMov' => $dataMov];
-                if ($cnpjCpfDescr !== '') $params1[':cnpjDescr'] = $cnpjCpfDescr;
+                if ($cnpjCpfDescr !== '') {
+                    $params1[':cnpjDescr1'] = $cnpjCpfDescr;
+                    $params1[':cnpjDescr2'] = $cnpjCpfDescr;
+                }
                 $st2->execute($params1);
                 $match = $st2->fetch(PDO::FETCH_ASSOC) ?: null;
 
