@@ -3326,7 +3326,7 @@ $hojeTopo = date('d/m/Y');
 
         // ====== Painel inline de vínculo múltiplo ======
         // Permite alocar 1 movimento OFX em N lançamentos (parcial/integral) na transação atômica.
-        function abrirPainelMultiplo(btn) {
+        async function abrirPainelMultiplo(btn) {
             const tr = btn.closest('tr');
             if (!tr) return;
             // Remove painel existente para esta linha
@@ -3340,6 +3340,14 @@ $hojeTopo = date('d/m/Y');
             const valorMov = Number(btn.dataset.valor || 0);
             const mes     = btn.dataset.mes;
             const dataMov = String(btn.dataset.data || '').substring(0, 10);
+            // Recarrega a lista de lançamentos do mês para refletir baixas/cancelamentos
+            // recentes (ex.: um lançamento que acabou de ser liberado por "cancelar
+            // vínculo" precisa aparecer aqui para ser revinculado).
+            try {
+                const cache = (tipo === 'PAGAR') ? dpLancMes : cpLancMes;
+                const m = await carregarLancamentosMes(tipo, [dataMov || (mes + '-01')], 0);
+                Object.assign(cache, m);
+            } catch (e) { /* mantém o cache atual se a recarga falhar */ }
             const lancListRaw = (tipo === 'PAGAR') ? (dpLancMes[mes] || []) : (cpLancMes[mes] || []);
             // Ordena por relevância em relação à data do movimento OFX:
             //   1º) recebido_em == data do mov (alta probabilidade de ser este pagamento)
@@ -3947,7 +3955,9 @@ $hojeTopo = date('d/m/Y');
                     const mes  = String(item.data || '').substring(0, 7);
                     const tipo = noDebito ? 'PAGAR' : 'RECEBER';
                     const cache = noDebito ? dpLancMes : cpLancMes;
-                    if (mes && !cache[mes]) {
+                    // Sempre recarrega o mês (o lançamento recém-liberado precisa entrar
+                    // na lista; antes só recarregava se o mês ainda não estivesse em cache).
+                    if (mes) {
                         try {
                             const m = await carregarLancamentosMes(tipo, [item.data], item.banco_fk || 0);
                             Object.assign(cache, m);
